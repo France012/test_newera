@@ -16,6 +16,7 @@ Maven modules `core-app` and `document-service` (Java 21, Spring Boot 3.3.5).
 | JPA entities (`adapter/out/persistence/*JpaEntity.java`) | **Data Architecture** | ✅ done |
 | Spring Data repositories (`*JpaRepository.java`) | **Data Architecture** | ✅ done |
 | `ClaimStatus` domain enum | **Data Architecture** | ✅ done — **do not redefine** |
+| Schema ⇄ entity contract tests (`SchemaMigrationContractTest`, §7-bis) | **Data Architecture** | ✅ done |
 | Repository **adapters** (entity ⇄ domain mapping) | Backend | ⬜ to implement |
 | Domain models, services, DTOs, controllers | Backend | ⬜ to implement |
 | `application.yml` datasource/flyway properties | Backend | ⬜ to implement (see §6) |
@@ -231,6 +232,34 @@ Key points:
    `ck_claims_status`) **and** the enum change, in the same pull request.
 6. Destructive changes (drop column/table) only with an explicit ADR and after the code that uses
    the object is removed.
+
+---
+
+## 7-bis. Automated guard (runs in `mvn verify`, no database)
+
+The rules above are not documentation-only: each module has a
+`SchemaMigrationContractTest` in `adapter/out/persistence` that reads the Flyway
+migration **from the test classpath** and fails the build when the schema and the
+JPA mapping drift apart. No PostgreSQL, no Testcontainers, no `@DataJpaTest` — so it
+runs in the default build of every agent and in the CI `unit-test` job.
+
+| Assertion | Protects |
+|---|---|
+| `@Table(schema)` / table name → `create table` present | DD-9, table renames |
+| every `@Column` (incl. `@EmbeddedId` fields) exists in the table | entity without migration (the `ddl-auto=validate` startup failure) |
+| `@Column(length)` ⇄ `varchar(n)` | silent truncation / validate mismatch |
+| every `@UniqueConstraint` name exists | dropped unique key |
+| `ClaimStatus` values ⇄ `ck_claims_status`, `ck_claim_status_history_*` | §7.5 (enum without migration, or vice versa) |
+| `claims.version` is `bigint not null` | optimistic locking |
+| `checksum_sha256` is `varchar(64)` + hex CHECK, `deleted_at` nullable + partial index | DD-2, DD-6 |
+| `application.yml`: `flyway.enabled`, `schemas`, `baseline-on-migrate: false`, `ddl-auto: validate` and **no** `create`/`update` | §6 (Flyway owns the schema) |
+
+```bash
+./mvnw -B -o -pl core-app,document-service test -Dtest='SchemaMigrationContractTest'
+```
+
+> Consequence for future work: a new column/value/constraint is added to the migration
+> **and** the entity in the same commit, otherwise this test fails first.
 
 ---
 
