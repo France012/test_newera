@@ -1,0 +1,52 @@
+# =============================================================================
+# bff — runtime configuration (port 8185)
+# -----------------------------------------------------------------------------
+# Stateless aggregation layer: NO datasource, NO schema, NO secret.
+# Downstream URLs and allowed CORS origins come from the environment, with
+# localhost defaults so the module is runnable out of the box in development.
+# =============================================================================
+server:
+  port: 8185
+  shutdown: graceful
+  error:
+    include-message: never
+    include-stacktrace: never
+
+spring:
+  application:
+    name: bff
+  mvc:
+    problemdetails:
+      enabled: true
+
+services:
+  core-app:
+    base-url: ${CORE_APP_BASE_URL:http://localhost:8180}
+  document-service:
+    base-url: ${DOCUMENT_SERVICE_BASE_URL:http://localhost:8181}
+  http:
+    connect-timeout-ms: ${BFF_CONNECT_TIMEOUT_MS:2000}
+    read-timeout-ms: ${BFF_READ_TIMEOUT_MS:5000}
+
+bff:
+  cors:
+    # Comma-separated list of browser origins. Never "*": credentials are enabled
+    # and the CORS spec forbids a wildcard origin in that case.
+    allowed-origins: ${BFF_ALLOWED_ORIGINS:http://localhost:5199}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+  endpoint:
+    health:
+      show-details: never
+      probes:
+        enabled: true
+
+springdoc:
+  api-docs:
+    path: /v3/api-docs
+  swagger-ui:
+    path: /swagger-ui.html

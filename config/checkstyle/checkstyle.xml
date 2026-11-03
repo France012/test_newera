@@ -1,0 +1,72 @@
+<?xml version="1.0"?>
+<!DOCTYPE module PUBLIC
+    "-//Checkstyle//DTD Checkstyle Configuration 1.3//EN"
+    "https://checkstyle.org/dtds/configuration_1_3.dtd">
+<!--
+  TK-DE445B — shared Checkstyle rules for every Java module of the monorepo.
+
+  Deliberately limited to rules that google-java-format output already satisfies, so the
+  formatter and the linter can never fight each other: formatting is owned by Spotless,
+  this file only enforces hygiene, naming and import discipline.
+
+  Run: ./mvnw -B checkstyle:check   (also bound to `verify`)
+-->
+<module name="Checker">
+  <property name="severity" value="warning"/>
+  <property name="fileExtensions" value="java"/>
+
+  <module name="FileTabCharacter">
+    <property name="eachLine" value="true"/>
+  </module>
+
+  <module name="LineLength">
+    <property name="max" value="${checkstyle.max.line.length}"/>
+    <property name="ignorePattern"
+              value="^package.*|^import.*|a href|href|http://|https://|ftp://"/>
+  </module>
+
+  <module name="NewlineAtEndOfFile">
+    <property name="lineSeparator" value="lf"/>
+  </module>
+
+  <module name="RegexpSingleline">
+    <property name="format" value="\s+$"/>
+    <property name="message" value="Line has trailing whitespace."/>
+  </module>
+
+  <module name="TreeWalker">
+    <!-- Imports -->
+    <module name="AvoidStarImport"/>
+    <module name="UnusedImports"/>
+    <module name="RedundantImport"/>
+    <module name="IllegalImport">
+      <property name="illegalPkgs" value="sun, com.sun"/>
+    </module>
+
+    <!-- Structure -->
+    <module name="OneTopLevelClass"/>
+    <module name="OuterTypeFilename"/>
+    <module name="NeedBraces"/>
+    <module name="DefaultComesLast"/>
+    <module name="FallThrough"/>
+
+    <!-- Naming -->
+    <module name="PackageName">
+      <property name="format" value="^[a-z]+(\.[a-z][a-z0-9]*)*$"/>
+    </module>
+    <module name="TypeName"/>
+    <module name="MethodName"/>
+    <module name="ConstantName"/>
+    <module name="LocalVariableName"/>
+    <module name="MemberName"/>
+    <module name="ParameterName"/>
+
+    <!-- Whitespace that google-java-format guarantees -->
+    <module name="WhitespaceAfter">
+      <property name="tokens" value="COMMA, SEMI, TYPECAST"/>
+    </module>
+    <module name="NoWhitespaceBefore">
+      <property name="tokens" value="COMMA, SEMI, POST_DEC, POST_INC"/>
+    </module>
+  </module>
+</module>

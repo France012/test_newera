@@ -1,0 +1,39 @@
+# =============================================================================
+# Build outputs and local state - never committed.
+# Java/Maven side of the monorepo; node_modules/dist are listed as well so a
+# frontend build never ends up in a commit either.
+# =============================================================================
+target/
+build/
+out/
+*.class
+*.jar
+*.war
+*.log
+hs_err_pid*
+replay_pid*
+
+# Coverage / SBOM / test reports
+coverage/
+sbom/
+*.sarif
+**/sbom-*.json
+
+# IDE / OS
+.idea/
+*.iml
+.vscode/
+.settings/
+.classpath
+.project
+.DS_Store
+
+# Local environment (only .env.example with placeholders is committed)
+.env
+.env.*
+!.env.example
+
+# Frontend build outputs (module owned by the frontend team)
+node_modules/
+dist/
+.vite/

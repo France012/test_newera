@@ -1,0 +1,187 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  TK-DE445B — root aggregator + parent POM of the claims platform.
+
+  Packaging "pom" with the three Spring Boot services as modules; every shared build concern
+  (Java release, formatting, linting, coverage, dependency versions) is defined ONCE here and
+  inherited, so a module can never drift from the platform conventions (blueprint §2.2).
+
+  Build entry points:
+    ./mvnw -B verify                     # whole platform: compile + test + spotless + checkstyle
+    ./mvnw -B -pl core-app -am verify    # one module and its (module-free) prerequisites
+-->
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+
+  <parent>
+    <groupId>org.springframework.boot</groupId>
+    <artifactId>spring-boot-starter-parent</artifactId>
+    <version>3.3.5</version>
+    <relativePath/>
+  </parent>
+
+  <groupId>it.enterprise.claims</groupId>
+  <artifactId>claims-platform</artifactId>
+  <version>0.1.0</version>
+  <packaging>pom</packaging>
+
+  <name>claims-platform</name>
+  <description>Insurance claims platform - monorepo aggregator (core-app, document-service, bff)</description>
+
+  <modules>
+    <module>core-app</module>
+    <module>document-service</module>
+    <module>bff</module>
+  </modules>
+
+  <properties>
+    <java.version>21</java.version>
+    <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+    <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
+
+    <!-- Third-party versions not managed by spring-boot-starter-parent -->
+    <springdoc.version>2.6.0</springdoc.version>
+
+    <!-- Build tooling versions -->
+    <spotless.version>2.43.0</spotless.version>
+    <google-java-format.version>1.22.0</google-java-format.version>
+    <jacoco.version>0.8.12</jacoco.version>
+    <cyclonedx.version>2.8.0</cyclonedx.version>
+
+    <!--
+      Shared configuration locations. maven.multiModuleProjectDirectory always points at the
+      directory that contains the .mvn folder (the repo root), so the same file is used no
+      matter which module is being built.
+    -->
+    <checkstyle.config.location>
+      ${maven.multiModuleProjectDirectory}/config/checkstyle/checkstyle.xml
+    </checkstyle.config.location>
+    <checkstyle.max.line.length>120</checkstyle.max.line.length>
+  </properties>
+
+  <dependencyManagement>
+    <dependencies>
+      <dependency>
+        <groupId>org.springdoc</groupId>
+        <artifactId>springdoc-openapi-starter-webmvc-ui</artifactId>
+        <version>${springdoc.version}</version>
+      </dependency>
+    </dependencies>
+  </dependencyManagement>
+
+  <build>
+    <pluginManagement>
+      <plugins>
+        <plugin>
+          <groupId>org.apache.maven.plugins</groupId>
+          <artifactId>maven-compiler-plugin</artifactId>
+          <configuration>
+            <release>${java.version}</release>
+            <compilerArgs>
+              <arg>-parameters</arg>
+              <arg>-Xlint:all,-processing</arg>
+            </compilerArgs>
+          </configuration>
+        </plugin>
+
+        <!--
+          SBOM aggregation (CycloneDX). Declared, not bound: CI calls it explicitly
+          (`mvn -B cyclonedx:makeAggregateBom`) so a local `verify` stays fast and offline-friendly.
+        -->
+        <plugin>
+          <groupId>org.cyclonedx</groupId>
+          <artifactId>cyclonedx-maven-plugin</artifactId>
+          <version>${cyclonedx.version}</version>
+          <configuration>
+            <projectType>application</projectType>
+            <schemaVersion>1.5</schemaVersion>
+            <includeTestScope>false</includeTestScope>
+            <outputFormat>json</outputFormat>
+            <outputName>sbom-claims-platform</outputName>
+          </configuration>
+        </plugin>
+      </plugins>
+    </pluginManagement>
+
+    <plugins>
+      <!-- Formatter: google-java-format, checked during `verify` -->
+      <plugin>
+        <groupId>com.diffplug.spotless</groupId>
+        <artifactId>spotless-maven-plugin</artifactId>
+        <version>${spotless.version}</version>
+        <configuration>
+          <java>
+            <includes>
+              <include>src/main/java/**/*.java</include>
+              <include>src/test/java/**/*.java</include>
+            </includes>
+            <googleJavaFormat>
+              <version>${google-java-format.version}</version>
+            </googleJavaFormat>
+            <removeUnusedImports/>
+            <trimTrailingWhitespace/>
+            <endWithNewline/>
+          </java>
+        </configuration>
+        <executions>
+          <execution>
+            <id>spotless-check</id>
+            <phase>verify</phase>
+            <goals>
+              <goal>check</goal>
+            </goals>
+          </execution>
+        </executions>
+      </plugin>
+
+      <!-- Linter: checkstyle, checked during `verify` -->
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-checkstyle-plugin</artifactId>
+        <version>3.6.0</version>
+        <configuration>
+          <configLocation>${checkstyle.config.location}</configLocation>
+          <inputEncoding>UTF-8</inputEncoding>
+          <consoleOutput>true</consoleOutput>
+          <failOnViolation>true</failOnViolation>
+          <violationSeverity>warning</violationSeverity>
+          <includeTestSourceDirectory>true</includeTestSourceDirectory>
+          <propertyExpansion>checkstyle.max.line.length=${checkstyle.max.line.length}</propertyExpansion>
+        </configuration>
+        <executions>
+          <execution>
+            <id>checkstyle-verify</id>
+            <phase>verify</phase>
+            <goals>
+              <goal>check</goal>
+            </goals>
+          </execution>
+        </executions>
+      </plugin>
+
+      <!-- Coverage: report only, no quality gate in phase 1 (blueprint §2.2) -->
+      <plugin>
+        <groupId>org.jacoco</groupId>
+        <artifactId>jacoco-maven-plugin</artifactId>
+        <version>${jacoco.version}</version>
+        <executions>
+          <execution>
+            <id>prepare-agent</id>
+            <goals>
+              <goal>prepare-agent</goal>
+            </goals>
+          </execution>
+          <execution>
+            <id>report</id>
+            <phase>verify</phase>
+            <goals>
+              <goal>report</goal>
+            </goals>
+          </execution>
+        </executions>
+      </plugin>
+    </plugins>
+  </build>
+</project>
