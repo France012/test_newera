@@ -1,0 +1,56 @@
+# =============================================================================
+# TK-DE445B — gitleaks configuration (AC-7, ADR-0010).
+# Default ruleset plus explicit rules for the token families we care about.
+# Allowlist covers documentation and example files that intentionally show
+# redacted patterns (blueprint §A-12 / docs/ci.md).
+# =============================================================================
+title = "claims-platform"
+
+[extend]
+useDefault = true
+
+[[rules]]
+id = "github-fine-grained-pat"
+description = "GitHub fine-grained personal access token"
+regex = '''github_pat_[0-9a-zA-Z]{22}_[0-9a-zA-Z]{59}'''
+tags = ["credential", "github"]
+
+[[rules]]
+id = "github-classic-pat"
+description = "GitHub classic personal access token"
+regex = '''ghp_[0-9a-zA-Z]{36}'''
+tags = ["credential", "github"]
+
+[[rules]]
+id = "aws-access-key-id"
+description = "AWS access key id"
+regex = '''(A3T[A-Z0-9]|AKIA|ASIA)[A-Z0-9]{16}'''
+tags = ["credential", "aws"]
+
+[[rules]]
+id = "private-key-block"
+description = "PEM private key block"
+regex = '''-----BEGIN [A-Z ]*PRIVATE KEY-----'''
+tags = ["credential", "key"]
+
+[[rules]]
+id = "postgres-url-with-password"
+description = "PostgreSQL connection string carrying an inline password"
+regex = '''postgres(ql)?://[^:@\s]+:[^@\s]+@'''
+tags = ["credential", "database"]
+
+# -----------------------------------------------------------------------------
+# Everything below is intentionally allowed and does not represent a leak.
+# -----------------------------------------------------------------------------
+[allowlist]
+description = "Documentation, examples and test fixtures with redacted patterns"
+paths = [
+  '''\.env\.example''',
+  '''frontend/\.env\.example''',
+  '''docs/plan/.*\.md''',
+  '''docs/ci\.md''',
+  '''docs/architecture/adr/.*\.md''',
+  '''frontend/src/.*\.test\.tsx?''',
+  '''.*\.example''',
+]
+regexes = ['''__change_me__''', '''\$\{[A-Z_]+\}''']

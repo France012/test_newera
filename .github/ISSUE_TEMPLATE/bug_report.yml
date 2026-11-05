@@ -1,0 +1,73 @@
+name: Bug report
+description: Report a defect in the claims platform
+title: 'fix(TK-xxx): '
+labels: ['bug', 'triage']
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Never paste production credentials, tokens or customer data in this form.
+        Security issues must be reported privately — see SECURITY.md.
+  - type: textarea
+    id: description
+    attributes:
+      label: Description
+      description: What is broken, in one or two sentences.
+    validations:
+      required: true
+  - type: dropdown
+    id: module
+    attributes:
+      label: Affected module
+      options:
+        - core-app
+        - document-service
+        - bff
+        - frontend
+        - infra
+        - ci
+        - documentation
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Start the stack with `docker compose -f infra/docker-compose.yml up --build`
+        2. Open http://localhost:8188
+        3. ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behaviour
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behaviour
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      value: |
+        - Commit / image digest:
+        - Java version:
+        - Node version:
+        - Browser:
+        - Services and ports involved (8180 / 8181 / 8185 / 8188):
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs / stack trace
+      description: Redact host names, tokens and personal data.
+      render: shell
+    validations:
+      required: false

@@ -7,17 +7,17 @@ Part of the `claims-platform` Maven aggregator; build it alone with
 
 ## API (contract of record: `docs/api/core-app.openapi.yaml`)
 
-| Method | Path | Notes |
-|---|---|---|
-| GET | `/api/v1/claims` | `status?`, `page=0`, `size=20`, `sort=openedAt,desc` (`createdAt` accepted as alias, `size` capped at 100) |
-| GET | `/api/v1/claims/{id}` | 404 `ProblemDetail` when unknown |
-| POST | `/api/v1/claims` | 201 + `Location`; claim always starts in `DRAFT` |
-| PATCH | `/api/v1/claims/{id}/status` | 409 `ProblemDetail` on an illegal transition |
-| GET | `/api/v1/claims/{id}/status-history` | audit trail, chronological |
-| POST | `/api/v1/claims/{id}/documents` | attaches document-service ids, idempotent |
-| GET | `/api/v1/policies` | paginated read model |
-| GET | `/api/v1/policies/{id}` | 404 when unknown |
-| GET | `/actuator/health` | liveness/readiness |
+| Method | Path                                 | Notes                                                                                                      |
+| ------ | ------------------------------------ | ---------------------------------------------------------------------------------------------------------- |
+| GET    | `/api/v1/claims`                     | `status?`, `page=0`, `size=20`, `sort=openedAt,desc` (`createdAt` accepted as alias, `size` capped at 100) |
+| GET    | `/api/v1/claims/{id}`                | 404 `ProblemDetail` when unknown                                                                           |
+| POST   | `/api/v1/claims`                     | 201 + `Location`; claim always starts in `DRAFT`                                                           |
+| PATCH  | `/api/v1/claims/{id}/status`         | 409 `ProblemDetail` on an illegal transition                                                               |
+| GET    | `/api/v1/claims/{id}/status-history` | audit trail, chronological                                                                                 |
+| POST   | `/api/v1/claims/{id}/documents`      | attaches document-service ids, idempotent                                                                  |
+| GET    | `/api/v1/policies`                   | paginated read model                                                                                       |
+| GET    | `/api/v1/policies/{id}`              | 404 when unknown                                                                                           |
+| GET    | `/actuator/health`                   | liveness/readiness                                                                                         |
 
 Errors are RFC 9457 `application/problem+json` (single `GlobalExceptionHandler`).
 

@@ -1,0 +1,118 @@
+# bff — aggregation layer (port 8185). Stateless, no datasource.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: claims-platform-config
+  namespace: claims-platform
+data:
+  # Non-confidential configuration only. Credentials live in Secret objects.
+  CORE_APP_DB_URL: jdbc:postgresql://postgres:5432/claims
+  DOCUMENT_SERVICE_DB_URL: jdbc:postgresql://postgres:5432/claims
+  CORE_APP_BASE_URL: http://core-app:8180
+  DOCUMENT_SERVICE_BASE_URL: http://document-service:8181
+  BFF_ALLOWED_ORIGINS: https://claims.example.com
+  BFF_CONNECT_TIMEOUT_MS: '2000'
+  BFF_READ_TIMEOUT_MS: '5000'
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: bff
+  namespace: claims-platform
+  labels:
+    app.kubernetes.io/name: bff
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: bff
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: bff
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: bff
+          image: ghcr.io/france012/test_newera/bff@sha256:0000000000000000000000000000000000000000000000000000000000000000
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8185
+          env:
+            - name: CORE_APP_BASE_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: claims-platform-config
+                  key: CORE_APP_BASE_URL
+            - name: DOCUMENT_SERVICE_BASE_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: claims-platform-config
+                  key: DOCUMENT_SERVICE_BASE_URL
+            - name: BFF_ALLOWED_ORIGINS
+              valueFrom:
+                configMapKeyRef:
+                  name: claims-platform-config
+                  key: BFF_ALLOWED_ORIGINS
+            - name: BFF_CONNECT_TIMEOUT_MS
+              valueFrom:
+                configMapKeyRef:
+                  name: claims-platform-config
+                  key: BFF_CONNECT_TIMEOUT_MS
+            - name: BFF_READ_TIMEOUT_MS
+              valueFrom:
+                configMapKeyRef:
+                  name: claims-platform-config
+                  key: BFF_READ_TIMEOUT_MS
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+          readinessProbe:
+            httpGet:
+              path: /actuator/health
+              port: 8185
+            initialDelaySeconds: 15
+            periodSeconds: 10
+            timeoutSeconds: 3
+          livenessProbe:
+            httpGet:
+              path: /actuator/health
+              port: 8185
+            initialDelaySeconds: 30
+            periodSeconds: 20
+            timeoutSeconds: 3
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ['ALL']
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: bff
+  namespace: claims-platform
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: bff
+  ports:
+    - name: http
+      port: 8185
+      targetPort: 8185

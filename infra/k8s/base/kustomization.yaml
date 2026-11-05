@@ -1,0 +1,27 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: claims-platform
+
+resources:
+  - namespace.yaml
+  - core-app.yaml
+  - document-service.yaml
+  - bff.yaml
+  - frontend.yaml
+
+commonLabels:
+  app.kubernetes.io/part-of: claims-platform
+  app.kubernetes.io/managed-by: kustomize
+
+# No `images:` transformer on purpose: the Deployments are pinned by digest
+# (@sha256:...) and a newTag override would silently replace the digest with a
+# mutable tag. Promote a release by editing the digests, or with:
+#   kustomize edit set image ghcr.io/france012/test_newera/core-app@sha256:<digest>
+#
+# The Secret `claims-platform-db` (POSTGRES_USER / POSTGRES_PASSWORD) is NOT
+# part of this base: create it out of band, never from git.
+#   kubectl -n claims-platform create secret generic claims-platform-db \
+#     --from-literal=POSTGRES_USER=claims \
+#     --from-literal=POSTGRES_PASSWORD=<from-vault>
+

@@ -1,0 +1,23 @@
+# TK-DE445B — code ownership (AC-13).
+# Default owner for everything not matched below.
+* @France012
+
+# Backend services
+/core-app/ @France012
+/document-service/ @France012
+/bff/ @France012
+
+# Frontend application
+/frontend/ @France012
+
+# Infrastructure, containers and CI
+/infra/ @France012
+/.github/ @France012
+
+# Build conventions, linting and shared configuration
+/pom.xml @France012
+/.mvn/ @France012
+/config/ @France012
+
+# Contracts, database contract and decisions
+/docs/ @France012

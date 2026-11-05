@@ -1,0 +1,218 @@
+name: CI
+
+# AC-4 (build + unit test + lint), AC-11 (main builds and tests on every push),
+# AC-7/AC-12 (deterministic secret gate), ADR-0008 (single Prettier install),
+# ADR-0009 (OpenAPI snapshots must parse as YAML).
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  NODE_VERSION: '20'
+  JAVA_VERSION: '21'
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Backend: compile + unit tests + Spotless + Checkstyle + JaCoCo on 3 modules.
+  # ---------------------------------------------------------------------------
+  java-verify:
+    name: Java verify (build + test + lint)
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: ${{ env.JAVA_VERSION }}
+          cache: maven
+          cache-dependency-path: '**/pom.xml'
+
+      - name: Verify (compile, test, spotless, checkstyle, jacoco)
+        run: ./mvnw -B -ntp verify
+
+      - name: Upload test and lint reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-reports
+          path: |
+            **/target/surefire-reports/**
+            **/target/checkstyle-result.xml
+            **/target/site/jacoco/**
+          retention-days: 7
+          if-no-files-found: ignore
+
+  # ---------------------------------------------------------------------------
+  # Frontend: install, lint, format check, unit tests, production build (AC-3).
+  # ---------------------------------------------------------------------------
+  frontend-ci:
+    name: Frontend (lint + test + build)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Format check
+        run: npm run format:check
+
+      # Pitfall P-1: `npm test` would start Vitest in watch mode and hang.
+      - name: Unit tests
+        run: npm run test:run
+
+      # `build` already runs `typecheck` (Pitfall P-2): no extra tsc step.
+      - name: Build
+        run: npm run build
+
+      - name: Upload frontend build
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-dist
+          path: frontend/dist
+          retention-days: 7
+          if-no-files-found: ignore
+
+  # ---------------------------------------------------------------------------
+  # Repository hygiene: Prettier, YAML contracts, secret gate (ADR-0008/0009/0010).
+  # ---------------------------------------------------------------------------
+  repo-hygiene:
+    name: Repo hygiene (format + contracts + secrets)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install Prettier (single Node project, ADR-0008)
+        working-directory: frontend
+        run: npm ci
+
+      - name: Prettier check (repository root)
+        run: ./frontend/node_modules/.bin/prettier --check .
+
+      - name: Validate YAML/OpenAPI snapshots (ADR-0009)
+        shell: bash
+        run: |
+          node - <<'NODE'
+          const fs = require('fs');
+          const path = require('path');
+          const yaml = require('./frontend/node_modules/js-yaml');
+
+          const files = [];
+          const walk = (dir) => {
+            for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+              const full = path.join(dir, entry.name);
+              if (entry.isDirectory()) walk(full);
+              else if (/\.ya?ml$/.test(entry.name)) files.push(full);
+            }
+          };
+          // Workflows, issue templates, compose, Kubernetes manifests, OpenAPI snapshots.
+          for (const dir of ['.github', 'infra', 'docs/api']) walk(dir);
+
+          let documents = 0;
+          let failed = 0;
+          for (const file of [...new Set(files)].sort()) {
+            try {
+              // loadAll: Kubernetes manifests and compose may hold several documents.
+              const docs = yaml.loadAll(fs.readFileSync(file, 'utf8'));
+              if (docs.length === 0 || docs.some((doc) => doc === null || doc === undefined)) {
+                throw new Error('empty document in stream');
+              }
+              documents += docs.length;
+              console.log('OK   ' + file + ' (' + docs.length + ' doc)');
+            } catch (error) {
+              failed += 1;
+              console.log('FAIL ' + file + ': ' + error.message);
+            }
+          }
+          console.log(files.length + ' files / ' + documents + ' documents checked, ' + failed + ' failed');
+          process.exit(failed ? 1 : 0);
+          NODE
+
+      - name: Secret gate (must print nothing)
+        shell: bash
+        run: |
+          set -o pipefail
+          MATCHES=$(grep -rniE '(ghp_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|AKIA[0-9A-Z]{16}|-----BEGIN [A-Z ]*PRIVATE KEY-----)' . \
+            --exclude-dir=.git \
+            --exclude-dir=node_modules \
+            --exclude-dir=target \
+            --exclude-dir=dist || true)
+          if [ -n "$MATCHES" ]; then
+            echo "::error::Potential secret found in the repository"
+            echo "$MATCHES"
+            exit 1
+          fi
+          echo "No secret pattern found."
+
+      - name: Version consistency (VERSION == root pom version)
+        shell: bash
+        run: |
+          FILE_VERSION=$(tr -d '[:space:]' < VERSION)
+          # The first <version> in the POM is the Spring Boot parent: read the
+          # project's own version, i.e. the first one after </parent>.
+          POM_VERSION=$(awk '/<\/parent>/{found=1; next} found && /<version>/{gsub(/.*<version>|<\/version>.*/, ""); print; exit}' pom.xml | tr -d '[:space:]')
+          echo "VERSION=$FILE_VERSION pom=$POM_VERSION"
+          test -n "$POM_VERSION"
+          test "$FILE_VERSION" = "$POM_VERSION"
+
+  # ---------------------------------------------------------------------------
+  # Single required status check for branch protection.
+  # ---------------------------------------------------------------------------
+  ci-success:
+    name: ci-success
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    needs: [java-verify, frontend-ci, repo-hygiene]
+    if: always()
+    steps:
+      - name: Assert all required jobs succeeded
+        shell: bash
+        run: |
+          echo "java-verify=${{ needs.java-verify.result }}"
+          echo "frontend-ci=${{ needs.frontend-ci.result }}"
+          echo "repo-hygiene=${{ needs.repo-hygiene.result }}"
+          if [ "${{ needs.java-verify.result }}" != "success" ] \
+            || [ "${{ needs.frontend-ci.result }}" != "success" ] \
+            || [ "${{ needs.repo-hygiene.result }}" != "success" ]; then
+            echo "::error::At least one required job did not succeed"
+            exit 1
+          fi

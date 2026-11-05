@@ -1,0 +1,39 @@
+# Docker build context guard (TK-DE445B)
+# Without this file `docker build .` would upload node_modules, target/ and the
+# local .env to the daemon. Keep the context minimal: only what the four
+# Dockerfiles actually COPY.
+
+.git
+.gitignore
+.gitattributes
+.github
+.idea
+.vscode
+
+# Build outputs
+**/target
+**/dist
+**/build
+coverage
+sbom
+**/node_modules
+frontend/node_modules
+frontend/dist
+
+# Local state and secrets
+.env
+.env.*
+!.env.example
+*.log
+hs_err_pid*
+replay_pid*
+
+# Documentation that no build stage needs
+docs
+*.md
+!README.md
+
+# Local orchestration / non-build assets
+infra/k8s
+infra/scripts
+infra/docker-compose.yml

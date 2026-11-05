@@ -10,17 +10,17 @@ Maven modules `core-app` and `document-service` (Java 21, Spring Boot 3.3.5).
 
 ## 1. Ownership boundary (read this before writing code)
 
-| Layer | Owner | Status |
-|---|---|---|
-| Flyway migrations (`db/migration/*.sql`) | **Data Architecture** | ✅ done, immutable once applied |
-| JPA entities (`adapter/out/persistence/*JpaEntity.java`) | **Data Architecture** | ✅ done |
-| Spring Data repositories (`*JpaRepository.java`) | **Data Architecture** | ✅ done |
-| `ClaimStatus` domain enum | **Data Architecture** | ✅ done — **do not redefine** |
-| Schema ⇄ entity contract tests (`SchemaMigrationContractTest`, §7-bis) | **Data Architecture** | ✅ done |
-| Repository **adapters** (entity ⇄ domain mapping) | Backend | ⬜ to implement |
-| Domain models, services, DTOs, controllers | Backend | ⬜ to implement |
-| `application.yml` datasource/flyway properties | Backend | ⬜ to implement (see §6) |
-| `docker-compose.yml` wiring of `infra/db/init` | Infra | ⬜ to implement |
+| Layer                                                                  | Owner                 | Status                          |
+| ---------------------------------------------------------------------- | --------------------- | ------------------------------- |
+| Flyway migrations (`db/migration/*.sql`)                               | **Data Architecture** | ✅ done, immutable once applied |
+| JPA entities (`adapter/out/persistence/*JpaEntity.java`)               | **Data Architecture** | ✅ done                         |
+| Spring Data repositories (`*JpaRepository.java`)                       | **Data Architecture** | ✅ done                         |
+| `ClaimStatus` domain enum                                              | **Data Architecture** | ✅ done — **do not redefine**   |
+| Schema ⇄ entity contract tests (`SchemaMigrationContractTest`, §7-bis) | **Data Architecture** | ✅ done                         |
+| Repository **adapters** (entity ⇄ domain mapping)                      | Backend               | ⬜ to implement                 |
+| Domain models, services, DTOs, controllers                             | Backend               | ⬜ to implement                 |
+| `application.yml` datasource/flyway properties                         | Backend               | ⬜ to implement (see §6)        |
+| `docker-compose.yml` wiring of `infra/db/init`                         | Infra                 | ⬜ to implement                 |
 
 > ⚠️ **Already created, do not duplicate:** `it.enterprise.claims.core.domain.model.ClaimStatus`,
 > all `*JpaEntity` classes and all `*JpaRepository` interfaces.
@@ -103,12 +103,12 @@ erDiagram
 
 ## 3. Deliverables (files owned by this layer)
 
-| Service | Migration | Entities | Repositories |
-|---|---|---|---|
-| `core-app` (schema `coreapp`) | `src/main/resources/db/migration/V1__init_claims.sql` | `ClaimJpaEntity`, `PolicyJpaEntity`, `CustomerJpaEntity`, `ClaimStatusHistoryJpaEntity`, `ClaimDocumentJpaEntity` + `ClaimDocumentId` | `ClaimJpaRepository`, `PolicyJpaRepository`, `CustomerJpaRepository`, `ClaimStatusHistoryJpaRepository`, `ClaimDocumentJpaRepository` |
-| `document-service` (schema `documents`) | `src/main/resources/db/migration/V1__init_documents.sql` | `DocumentJpaEntity` | `DocumentJpaRepository` |
-| domain | — | `it.enterprise.claims.core.domain.model.ClaimStatus` | — |
-| local provisioning | `infra/db/init/01-init-schemas.sql` (not Flyway) | — | — |
+| Service                                 | Migration                                                | Entities                                                                                                                              | Repositories                                                                                                                          |
+| --------------------------------------- | -------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| `core-app` (schema `coreapp`)           | `src/main/resources/db/migration/V1__init_claims.sql`    | `ClaimJpaEntity`, `PolicyJpaEntity`, `CustomerJpaEntity`, `ClaimStatusHistoryJpaEntity`, `ClaimDocumentJpaEntity` + `ClaimDocumentId` | `ClaimJpaRepository`, `PolicyJpaRepository`, `CustomerJpaRepository`, `ClaimStatusHistoryJpaRepository`, `ClaimDocumentJpaRepository` |
+| `document-service` (schema `documents`) | `src/main/resources/db/migration/V1__init_documents.sql` | `DocumentJpaEntity`                                                                                                                   | `DocumentJpaRepository`                                                                                                               |
+| domain                                  | —                                                        | `it.enterprise.claims.core.domain.model.ClaimStatus`                                                                                  | —                                                                                                                                     |
+| local provisioning                      | `infra/db/init/01-init-schemas.sql` (not Flyway)         | —                                                                                                                                     | —                                                                                                                                     |
 
 Java packages: `it.enterprise.claims.core…` / `it.enterprise.claims.documents…`
 (blueprint §2.7). Entities are persistence-only and must never leak into the web/DTO layer.
@@ -118,31 +118,35 @@ Java packages: `it.enterprise.claims.core…` / `it.enterprise.claims.documents�
 ## 4. Table reference & constraints
 
 ### 4.1 `coreapp.customers`
+
 `pk_customers`, `uk_customers_fiscal_code`, CHECKs: fiscal code / full name not blank.
 No index beyond the unique key (lookup by `fiscal_code` only).
 
 ### 4.2 `coreapp.policies`
+
 `pk_policies`, `uk_policies_policy_number`, `fk_policies_customer → customers(id)`,
 `ck_policies_validity_period (valid_to > valid_from)`, `ck_policies_premium_non_negative`,
 `idx_policies_customer`. `policy_number` is what `POST /api/v1/claims` receives, so the unique
 constraint is the lookup path.
 
 ### 4.3 `coreapp.claims`
+
 `pk_claims`, `uk_claims_claim_number`, `fk_claims_policy → policies(id)`,
 `ck_claims_status` (7 values, mirrors `ClaimStatus`), `ck_claims_updated_at_after_opened_at`,
 `ck_claims_version_non_negative`.
 Indexes and the query they serve:
 
-| Index | Serves |
-|---|---|
-| `idx_claims_status` | `GET /api/v1/claims?status=…`, dashboard counts |
-| `idx_claims_policy` | claims of one policy |
-| `idx_claims_opened_at` (desc) | default list sort `sort=openedAt,desc` |
+| Index                         | Serves                                          |
+| ----------------------------- | ----------------------------------------------- |
+| `idx_claims_status`           | `GET /api/v1/claims?status=…`, dashboard counts |
+| `idx_claims_policy`           | claims of one policy                            |
+| `idx_claims_opened_at` (desc) | default list sort `sort=openedAt,desc`          |
 
 `version` is the Hibernate `@Version` counter (optimistic locking); `updated_at` is maintained by
 `@PreUpdate`, `opened_at` by `@PrePersist`.
 
 ### 4.4 `coreapp.claim_status_history`
+
 Append-only audit trail: `pk_claim_status_history`, `fk_claim_status_history_claim → claims(id)
 ON DELETE CASCADE`, CHECKs on both `from_status` (nullable, `NULL` for the opening transition) and
 `to_status`, plus `ck_claim_status_history_actual_change (from_status <> to_status)`.
@@ -150,11 +154,13 @@ ON DELETE CASCADE`, CHECKs on both `from_status` (nullable, `NULL` for the openi
 `GET /api/v1/claims/{id}/status-history`.
 
 ### 4.5 `coreapp.claim_documents`
+
 Natural composite key `pk_claim_documents (claim_id, document_id)` — prevents duplicate
 attachments; `fk_claim_documents_claim ON DELETE CASCADE`; `idx_claim_documents_document` for the
 reverse lookup ("which claim owns this document id").
 
 ### 4.6 `documents.documents`
+
 `pk_documents`, `uk_documents_storage_key`, `ck_documents_size_bytes_non_negative`,
 `ck_documents_checksum_sha256_hex (~* '^[0-9a-f]{64}$')`, not-blank checks,
 `ck_documents_deleted_at_after_uploaded_at`.
@@ -166,17 +172,17 @@ Indexes: `idx_documents_claim` (blueprint), `idx_documents_claim_active` (**part
 
 ## 5. Design decisions
 
-| ID | Decision | Rationale |
-|---|---|---|
-| **DD-1** | UUID PKs generated in the application layer, no DB default (`gen_random_uuid()` not used) | blueprint §2.6; keeps ids known before flush, simplifies unit tests, no extension dependency |
-| **DD-2** | `documents.checksum_sha256` is `varchar(64)`, **not** `char(64)` as drafted in §2.6 | PostgreSQL `char` is `bpchar`, which is not type-compatible with the Hibernate `String` mapping: `ddl-auto=validate` would fail at startup. Format is enforced by a hex CHECK, so the guarantee is identical |
-| **DD-3** | Foreign keys mapped as scalar `UUID` fields, no `@ManyToOne` associations | persistence model stays free of lazy-loading/`LazyInitializationException` traps; the adapter decides when to fetch (e.g. policy → `policyNumber` for `ClaimResponse`) |
-| **DD-4** | `claim_documents` uses a composite key via `@EmbeddedId ClaimDocumentId` | the natural key is meaningful and prevents duplicate links; no surrogate id needed |
-| **DD-5** | No cross-service FK (`documents.claim_id`, `claim_documents.document_id`) | database-per-service; referential integrity across services is enforced by the BFF/application, not by the DB |
-| **DD-6** | Soft delete on documents (`deleted_at`) + partial index | `DELETE /api/v1/documents/{id}` must stay auditable; every repository read method embeds `DeletedAtIsNull` so the filter cannot be forgotten |
-| **DD-7** | Status stored as `varchar(32)` + CHECK, mapped with `@Enumerated(EnumType.STRING)` — **no** native PostgreSQL `ENUM` type | native enums make value removal/reordering a locking `ALTER TYPE`; `varchar + CHECK` is a plain, transactional, Flyway-friendly change. The enum remains the single source of truth for the application |
-| **DD-8** | No DB triggers (`updated_at` handled by JPA callbacks) | keeps the DB free of hidden behaviour and keeps entity state consistent with the row after flush; the column defaults are only safety nets for manual SQL |
-| **DD-9** | All migration objects are schema-qualified (`coreapp.…`, `documents.…`) | the migration is correct regardless of the session `search_path` (CI, psql, Flyway) |
+| ID       | Decision                                                                                                                  | Rationale                                                                                                                                                                                                    |
+| -------- | ------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **DD-1** | UUID PKs generated in the application layer, no DB default (`gen_random_uuid()` not used)                                 | blueprint §2.6; keeps ids known before flush, simplifies unit tests, no extension dependency                                                                                                                 |
+| **DD-2** | `documents.checksum_sha256` is `varchar(64)`, **not** `char(64)` as drafted in §2.6                                       | PostgreSQL `char` is `bpchar`, which is not type-compatible with the Hibernate `String` mapping: `ddl-auto=validate` would fail at startup. Format is enforced by a hex CHECK, so the guarantee is identical |
+| **DD-3** | Foreign keys mapped as scalar `UUID` fields, no `@ManyToOne` associations                                                 | persistence model stays free of lazy-loading/`LazyInitializationException` traps; the adapter decides when to fetch (e.g. policy → `policyNumber` for `ClaimResponse`)                                       |
+| **DD-4** | `claim_documents` uses a composite key via `@EmbeddedId ClaimDocumentId`                                                  | the natural key is meaningful and prevents duplicate links; no surrogate id needed                                                                                                                           |
+| **DD-5** | No cross-service FK (`documents.claim_id`, `claim_documents.document_id`)                                                 | database-per-service; referential integrity across services is enforced by the BFF/application, not by the DB                                                                                                |
+| **DD-6** | Soft delete on documents (`deleted_at`) + partial index                                                                   | `DELETE /api/v1/documents/{id}` must stay auditable; every repository read method embeds `DeletedAtIsNull` so the filter cannot be forgotten                                                                 |
+| **DD-7** | Status stored as `varchar(32)` + CHECK, mapped with `@Enumerated(EnumType.STRING)` — **no** native PostgreSQL `ENUM` type | native enums make value removal/reordering a locking `ALTER TYPE`; `varchar + CHECK` is a plain, transactional, Flyway-friendly change. The enum remains the single source of truth for the application      |
+| **DD-8** | No DB triggers (`updated_at` handled by JPA callbacks)                                                                    | keeps the DB free of hidden behaviour and keeps entity state consistent with the row after flush; the column defaults are only safety nets for manual SQL                                                    |
+| **DD-9** | All migration objects are schema-qualified (`coreapp.…`, `documents.…`)                                                   | the migration is correct regardless of the session `search_path` (CI, psql, Flyway)                                                                                                                          |
 
 ---
 
@@ -194,13 +200,13 @@ spring:
   flyway:
     enabled: true
     locations: classpath:db/migration
-    schemas: coreapp            # documents: documents
-    default-schema: coreapp     # documents: documents
+    schemas: coreapp # documents: documents
+    default-schema: coreapp # documents: documents
     baseline-on-migrate: false
     validate-on-migrate: true
   jpa:
     hibernate:
-      ddl-auto: validate        # NEVER create/update: Flyway owns the schema
+      ddl-auto: validate # NEVER create/update: Flyway owns the schema
     properties:
       hibernate:
         default_schema: coreapp # documents: documents
@@ -209,11 +215,11 @@ spring:
 
 Key points:
 
-* `ddl-auto: validate` — Hibernate only checks that entities match the migrated schema (this is why
+- `ddl-auto: validate` — Hibernate only checks that entities match the migrated schema (this is why
   DD-2 exists). Never `update`/`create` in any profile.
-* `spring.flyway.schemas` also creates the schema if missing; `infra/db/init/01-init-schemas.sql`
+- `spring.flyway.schemas` also creates the schema if missing; `infra/db/init/01-init-schemas.sql`
   is only a convenience for local docker-compose.
-* **Tests must not need PostgreSQL** (blueprint constraint): unit tests + `@WebMvcTest` +
+- **Tests must not need PostgreSQL** (blueprint constraint): unit tests + `@WebMvcTest` +
   Mockito only; if a data-layer test is ever needed, use `@DataJpaTest` with an explicit
   Testcontainers/embedded profile, never the default build.
 
@@ -243,16 +249,16 @@ migration **from the test classpath** and fails the build when the schema and th
 JPA mapping drift apart. No PostgreSQL, no Testcontainers, no `@DataJpaTest` — so it
 runs in the default build of every agent and in the CI `unit-test` job.
 
-| Assertion | Protects |
-|---|---|
-| `@Table(schema)` / table name → `create table` present | DD-9, table renames |
-| every `@Column` (incl. `@EmbeddedId` fields) exists in the table | entity without migration (the `ddl-auto=validate` startup failure) |
-| `@Column(length)` ⇄ `varchar(n)` | silent truncation / validate mismatch |
-| every `@UniqueConstraint` name exists | dropped unique key |
-| `ClaimStatus` values ⇄ `ck_claims_status`, `ck_claim_status_history_*` | §7.5 (enum without migration, or vice versa) |
-| `claims.version` is `bigint not null` | optimistic locking |
-| `checksum_sha256` is `varchar(64)` + hex CHECK, `deleted_at` nullable + partial index | DD-2, DD-6 |
-| `application.yml`: `flyway.enabled`, `schemas`, `baseline-on-migrate: false`, `ddl-auto: validate` and **no** `create`/`update` | §6 (Flyway owns the schema) |
+| Assertion                                                                                                                       | Protects                                                           |
+| ------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------ |
+| `@Table(schema)` / table name → `create table` present                                                                          | DD-9, table renames                                                |
+| every `@Column` (incl. `@EmbeddedId` fields) exists in the table                                                                | entity without migration (the `ddl-auto=validate` startup failure) |
+| `@Column(length)` ⇄ `varchar(n)`                                                                                                | silent truncation / validate mismatch                              |
+| every `@UniqueConstraint` name exists                                                                                           | dropped unique key                                                 |
+| `ClaimStatus` values ⇄ `ck_claims_status`, `ck_claim_status_history_*`                                                          | §7.5 (enum without migration, or vice versa)                       |
+| `claims.version` is `bigint not null`                                                                                           | optimistic locking                                                 |
+| `checksum_sha256` is `varchar(64)` + hex CHECK, `deleted_at` nullable + partial index                                           | DD-2, DD-6                                                         |
+| `application.yml`: `flyway.enabled`, `schemas`, `baseline-on-migrate: false`, `ddl-auto: validate` and **no** `create`/`update` | §6 (Flyway owns the schema)                                        |
 
 ```bash
 ./mvnw -B -o -pl core-app,document-service test -Dtest='SchemaMigrationContractTest'

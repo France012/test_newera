@@ -1,0 +1,99 @@
+# core-app — claims/policies service (port 8180)
+# Image is pinned by digest: a tag is mutable, a digest is not (supply chain).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: core-app
+  namespace: claims-platform
+  labels:
+    app.kubernetes.io/name: core-app
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: core-app
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: core-app
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: core-app
+          # Replace the placeholder digest with the value signed in CI:
+          #   cosign verify ghcr.io/france012/test_newera/core-app@sha256:...
+          image: ghcr.io/france012/test_newera/core-app@sha256:0000000000000000000000000000000000000000000000000000000000000000
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8180
+          env:
+            - name: CORE_APP_DB_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: claims-platform-config
+                  key: CORE_APP_DB_URL
+            - name: POSTGRES_USER
+              valueFrom:
+                secretKeyRef:
+                  name: claims-platform-db
+                  key: POSTGRES_USER
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: claims-platform-db
+                  key: POSTGRES_PASSWORD
+          resources:
+            requests:
+              cpu: 100m
+              memory: 384Mi
+            limits:
+              cpu: '1'
+              memory: 768Mi
+          readinessProbe:
+            httpGet:
+              path: /actuator/health
+              port: 8180
+            initialDelaySeconds: 20
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /actuator/health
+              port: 8180
+            initialDelaySeconds: 40
+            periodSeconds: 20
+            timeoutSeconds: 3
+            failureThreshold: 3
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ['ALL']
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: core-app
+  namespace: claims-platform
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: core-app
+  ports:
+    - name: http
+      port: 8180
+      targetPort: 8180

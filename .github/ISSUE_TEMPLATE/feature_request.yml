@@ -1,0 +1,49 @@
+name: Feature request
+description: Propose a new capability or an improvement
+title: 'feat(TK-xxx): '
+labels: ['enhancement', 'triage']
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: Which user/business need is not covered today?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: Describe the behaviour you expect, including API/UI sketches if useful.
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Proposed acceptance criteria
+      placeholder: |
+        - AC-1 ...
+        - AC-2 ...
+    validations:
+      required: true
+  - type: dropdown
+    id: modules
+    attributes:
+      label: Modules impacted
+      multiple: true
+      options:
+        - core-app
+        - document-service
+        - bff
+        - frontend
+        - infra
+        - ci
+        - documentation
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+    validations:
+      required: false

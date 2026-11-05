@@ -1,0 +1,327 @@
+openapi: 3.0.3
+
+# =============================================================================
+# claims-platform — bff HTTP contract (blueprint §2.5)
+# -----------------------------------------------------------------------------
+# Hand-written contract, aligned 1:1 with the implemented controllers:
+#   bff/src/main/java/it/enterprise/claims/bff/web/BffClaimController.java
+#   bff/src/main/java/it/enterprise/claims/bff/web/DashboardController.java
+#
+# This is THE contract consumed by frontend/src/api/*.ts — `frontend/src/types/claims.ts`
+# must stay structurally identical to the schemas below.
+#
+# The BFF is stateless: no datasource, no schema. It fans out to core-app (:8180) and
+# document-service (:8181) whose base URLs come from the environment
+# (CORE_APP_BASE_URL / DOCUMENT_SERVICE_BASE_URL).
+# =============================================================================
+
+info:
+  title: claims-platform — bff API
+  version: 0.1.0
+  description: |
+    Aggregation layer for the React frontend, base path `/bff/v1`.
+
+    CORS: the allowed browser origin list is read from `BFF_ALLOWED_ORIGINS`
+    (default `http://localhost:5199`, never `*` because credentials are enabled).
+    In development and in the container the frontend talks to the BFF same-origin through
+    a proxy (`/bff`), so CORS is only exercised when the two are on different origins.
+
+    Downstream failures are translated: `404` stayed a `404`, any other 4xx/5xx becomes
+    `502 Bad Gateway`, an unreachable service becomes `503 Service Unavailable`.
+  license:
+    name: UNLICENSED
+
+servers:
+  - url: http://localhost:8185
+    description: Local development (blueprint §2.9)
+
+security: []
+
+tags:
+  - name: Claims
+    description: Read-optimised claim views for the UI
+  - name: Dashboard
+  - name: Actuator
+
+paths:
+  /bff/v1/claims:
+    get:
+      tags: [Claims]
+      operationId: listClaimSummaries
+      summary: Claim summaries (without documents)
+      description: |
+        Proxies `GET /api/v1/claims` on core-app and strips the fields the list view does not need.
+        `status` is passed through verbatim (no local validation of the enum).
+      parameters:
+        - name: status
+          in: query
+          required: false
+          description: Claim status filter, forwarded to core-app.
+          schema:
+            type: string
+            example: UNDER_REVIEW
+        - name: page
+          in: query
+          required: false
+          schema:
+            type: integer
+            format: int32
+            minimum: 0
+            default: 0
+        - name: size
+          in: query
+          required: false
+          schema:
+            type: integer
+            format: int32
+            minimum: 1
+            default: 20
+      responses:
+        '200':
+          description: The page content, flattened to a plain array (no page envelope).
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/ClaimSummaryResponse'
+        '502':
+          $ref: '#/components/responses/BadGateway'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+
+  /bff/v1/claims/{claimId}:
+    get:
+      tags: [Claims]
+      operationId: getClaimDetail
+      summary: Claim detail with its documents
+      description: |
+        Aggregates `GET /api/v1/claims/{id}` (core-app) and
+        `GET /api/v1/documents?claimId=...` (document-service) into a single payload.
+        Both downstream calls are mandatory: there is NO partial-success mode. If either
+        dependency fails the request fails as a whole (`502`/`503`), so a client never
+        receives a claim detail with silently missing documents.
+      parameters:
+        - name: claimId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Aggregated claim detail.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ClaimDetailResponse'
+        '404':
+          description: The claim does not exist in core-app.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '502':
+          $ref: '#/components/responses/BadGateway'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+
+  /bff/v1/dashboard/summary:
+    get:
+      tags: [Dashboard]
+      operationId: getDashboardSummary
+      summary: Counters for the dashboard cards
+      responses:
+        '200':
+          description: Total open claims and the breakdown per status.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DashboardSummaryResponse'
+              example:
+                totalOpen: 42
+                byStatus:
+                  DRAFT: 5
+                  SUBMITTED: 9
+                  UNDER_REVIEW: 11
+                  INTEGRATION_REQUESTED: 4
+                  APPROVED: 8
+                  REJECTED: 3
+                  CLOSED: 2
+        '502':
+          $ref: '#/components/responses/BadGateway'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+
+  /actuator/health:
+    get:
+      tags: [Actuator]
+      operationId: health
+      summary: Liveness and readiness probe
+      responses:
+        '200':
+          description: BFF is UP.
+          content:
+            application/vnd.spring-boot.actuator.v3+json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: UP
+        '503':
+          description: BFF is DOWN.
+
+components:
+  responses:
+    BadGateway:
+      description: A downstream service answered with an unexpected 4xx/5xx.
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+    ServiceUnavailable:
+      description: A downstream service could not be reached (connection refused / timeout).
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+
+  schemas:
+    ClaimStatus:
+      type: string
+      enum:
+        - DRAFT
+        - SUBMITTED
+        - UNDER_REVIEW
+        - INTEGRATION_REQUESTED
+        - APPROVED
+        - REJECTED
+        - CLOSED
+
+    ClaimSummaryResponse:
+      type: object
+      required:
+        - id
+        - claimNumber
+        - policyNumber
+        - claimType
+        - status
+        - incidentDate
+        - openedAt
+        - updatedAt
+        - documentIds
+      properties:
+        id:
+          type: string
+          format: uuid
+        claimNumber:
+          type: string
+          example: CLM-2024-000123
+        policyNumber:
+          type: string
+          example: POL-2024-000456
+        customerId:
+          type: string
+          format: uuid
+          nullable: true
+        claimType:
+          type: string
+        status:
+          $ref: '#/components/schemas/ClaimStatus'
+        description:
+          type: string
+          nullable: true
+        incidentDate:
+          type: string
+          format: date
+        openedAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+        documentIds:
+          type: array
+          items:
+            type: string
+            format: uuid
+
+    DocumentSummaryResponse:
+      type: object
+      required: [id, claimId, fileName, contentType, sizeBytes, documentType, uploadedAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        claimId:
+          type: string
+          format: uuid
+        fileName:
+          type: string
+        contentType:
+          type: string
+        sizeBytes:
+          type: integer
+          format: int64
+        documentType:
+          type: string
+        checksumSha256:
+          type: string
+          nullable: true
+        uploadedAt:
+          type: string
+          format: date-time
+
+    ClaimDetailResponse:
+      type: object
+      required: [claim, documents]
+      properties:
+        claim:
+          $ref: '#/components/schemas/ClaimSummaryResponse'
+        documents:
+          type: array
+          description: Never null; an empty array when the claim has no documents.
+          items:
+            $ref: '#/components/schemas/DocumentSummaryResponse'
+
+    DashboardSummaryResponse:
+      type: object
+      required: [totalOpen, byStatus]
+      properties:
+        totalOpen:
+          type: integer
+          format: int64
+          description: |
+            Sum of the states that still need an operator action:
+            `DRAFT + SUBMITTED + UNDER_REVIEW + INTEGRATION_REQUESTED`
+            (`APPROVED`, `REJECTED` and `CLOSED` are excluded).
+        byStatus:
+          type: object
+          description: |
+            Always contains all seven statuses in lifecycle order
+            (`DRAFT`, `SUBMITTED`, `UNDER_REVIEW`, `INTEGRATION_REQUESTED`, `APPROVED`,
+            `REJECTED`, `CLOSED`), with `0` for the empty ones.
+          additionalProperties:
+            type: integer
+            format: int64
+
+    Problem:
+      type: object
+      description: RFC 9457 problem detail.
+      required: [status, title]
+      properties:
+        type:
+          type: string
+          format: uri
+          default: about:blank
+        title:
+          type: string
+        status:
+          type: integer
+          format: int32
+        detail:
+          type: string
+        instance:
+          type: string
+          format: uri

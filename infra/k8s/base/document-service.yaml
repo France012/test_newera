@@ -1,0 +1,114 @@
+# document-service — document store (port 8181), content on /var/lib/documents
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: documents-data
+  namespace: claims-platform
+spec:
+  accessModes: ['ReadWriteOnce']
+  resources:
+    requests:
+      storage: 10Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: document-service
+  namespace: claims-platform
+  labels:
+    app.kubernetes.io/name: document-service
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: document-service
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: document-service
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: document-service
+          image: ghcr.io/france012/test_newera/document-service@sha256:0000000000000000000000000000000000000000000000000000000000000000
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8181
+          env:
+            - name: DOCUMENT_SERVICE_DB_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: claims-platform-config
+                  key: DOCUMENT_SERVICE_DB_URL
+            - name: DOCUMENTS_STORAGE_PATH
+              value: /var/lib/documents
+            - name: POSTGRES_USER
+              valueFrom:
+                secretKeyRef:
+                  name: claims-platform-db
+                  key: POSTGRES_USER
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: claims-platform-db
+                  key: POSTGRES_PASSWORD
+          resources:
+            requests:
+              cpu: 100m
+              memory: 384Mi
+            limits:
+              cpu: '1'
+              memory: 1Gi
+          readinessProbe:
+            httpGet:
+              path: /actuator/health
+              port: 8181
+            initialDelaySeconds: 20
+            periodSeconds: 10
+            timeoutSeconds: 3
+          livenessProbe:
+            httpGet:
+              path: /actuator/health
+              port: 8181
+            initialDelaySeconds: 40
+            periodSeconds: 20
+            timeoutSeconds: 3
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ['ALL']
+          volumeMounts:
+            - name: documents
+              mountPath: /var/lib/documents
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: documents
+          persistentVolumeClaim:
+            claimName: documents-data
+        - name: tmp
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: document-service
+  namespace: claims-platform
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: document-service
+  ports:
+    - name: http
+      port: 8181
+      targetPort: 8181

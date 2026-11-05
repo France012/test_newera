@@ -1,0 +1,127 @@
+# =============================================================================
+# TK-DE445B — local full stack (PostgreSQL 16 + 3 services + frontend).
+# Usage:
+#   cp .env.example .env      # then replace every __change_me__
+#   docker compose -f infra/docker-compose.yml up --build
+# No secret is written here: every value comes from ${VAR} in the untracked .env.
+# =============================================================================
+name: claims-platform
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: claims-postgres
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-claims}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+      POSTGRES_DB: ${POSTGRES_DB:-claims}
+    ports:
+      - '5442:5432'
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      # Dev-only provisioning of the two schemas (not a Flyway migration).
+      - ./db/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U ${POSTGRES_USER:-claims} -d ${POSTGRES_DB:-claims}']
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
+    restart: unless-stopped
+
+  core-app:
+    build:
+      context: ..
+      dockerfile: infra/docker/core-app.Dockerfile
+    container_name: claims-core-app
+    environment:
+      CORE_APP_DB_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB:-claims}
+      CORE_APP_DB_POOL_SIZE: ${CORE_APP_DB_POOL_SIZE:-10}
+      POSTGRES_USER: ${POSTGRES_USER:-claims}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+    ports:
+      - '8180:8180'
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ['CMD-SHELL', 'wget -q -O - http://127.0.0.1:8180/actuator/health || exit 1']
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 40s
+    restart: unless-stopped
+
+  document-service:
+    build:
+      context: ..
+      dockerfile: infra/docker/document-service.Dockerfile
+    container_name: claims-document-service
+    environment:
+      DOCUMENT_SERVICE_DB_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB:-claims}
+      DOCUMENT_SERVICE_DB_POOL_SIZE: ${DOCUMENT_SERVICE_DB_POOL_SIZE:-10}
+      DOCUMENTS_STORAGE_PATH: /var/lib/documents
+      POSTGRES_USER: ${POSTGRES_USER:-claims}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+    ports:
+      - '8181:8181'
+    volumes:
+      - documents_data:/var/lib/documents
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ['CMD-SHELL', 'wget -q -O - http://127.0.0.1:8181/actuator/health || exit 1']
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 40s
+    restart: unless-stopped
+
+  bff:
+    build:
+      context: ..
+      dockerfile: infra/docker/bff.Dockerfile
+    container_name: claims-bff
+    environment:
+      CORE_APP_BASE_URL: http://core-app:8180
+      DOCUMENT_SERVICE_BASE_URL: http://document-service:8181
+      BFF_ALLOWED_ORIGINS: ${BFF_ALLOWED_ORIGINS:-http://localhost:8188}
+      BFF_CONNECT_TIMEOUT_MS: ${BFF_CONNECT_TIMEOUT_MS:-2000}
+      BFF_READ_TIMEOUT_MS: ${BFF_READ_TIMEOUT_MS:-5000}
+    ports:
+      - '8185:8185'
+    depends_on:
+      core-app:
+        condition: service_healthy
+      document-service:
+        condition: service_healthy
+    healthcheck:
+      test: ['CMD-SHELL', 'wget -q -O - http://127.0.0.1:8185/actuator/health || exit 1']
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 40s
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ..
+      dockerfile: infra/docker/frontend.Dockerfile
+    container_name: claims-frontend
+    ports:
+      - '8188:8188'
+    depends_on:
+      bff:
+        condition: service_healthy
+    healthcheck:
+      test: ['CMD-SHELL', 'wget -q -O - http://127.0.0.1:8188/healthz || exit 1']
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
+    restart: unless-stopped
+
+volumes:
+  pgdata:
+  documents_data:

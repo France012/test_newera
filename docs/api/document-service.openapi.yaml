@@ -1,0 +1,322 @@
+openapi: 3.0.3
+
+# =============================================================================
+# claims-platform — document-service HTTP contract (blueprint §2.4)
+# -----------------------------------------------------------------------------
+# Hand-written contract, aligned 1:1 with the implemented controller:
+#   document-service/src/main/java/it/enterprise/claims/documents/adapter/in/web/DocumentController.java
+#
+# IMPORTANT: `claimId` and `documentType` are QUERY parameters of the multipart upload
+# (`@RequestParam`), not additional parts. The single multipart part is `file`
+# (`@RequestPart("file")`). Keeping this explicit prevents the frontend from guessing wrong.
+# =============================================================================
+
+info:
+  title: claims-platform — document-service API
+  version: 0.1.0
+  description: |
+    Document metadata and content of the `document-service` (port 8181).
+
+    `claimId` is a **logical** reference: there is no cross-service foreign key, the
+    `documents` schema does not know about `coreapp.claims` (database-per-service).
+    Content is stored behind the `DocumentStoragePort` (local filesystem in phase 1).
+  license:
+    name: UNLICENSED
+
+servers:
+  - url: http://localhost:8181
+    description: Local development (blueprint §2.9)
+
+security: []
+
+tags:
+  - name: Documents
+    description: Upload, read, download and soft delete
+  - name: Actuator
+
+paths:
+  /api/v1/documents:
+    post:
+      tags: [Documents]
+      operationId: uploadDocument
+      summary: Upload a document for a claim
+      description: |
+        `multipart/form-data` with exactly one file part named `file`; `claimId` and
+        `documentType` travel in the query string. Maximum file size is 20MB
+        (`spring.servlet.multipart.max-file-size`), larger requests get `413`.
+        The SHA-256 checksum is computed server side.
+      parameters:
+        - name: claimId
+          in: query
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: documentType
+          in: query
+          required: false
+          schema:
+            type: string
+            default: OTHER
+            example: POLICY_COPY
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file:
+                  type: string
+                  format: binary
+      responses:
+        '201':
+          description: Document stored.
+          headers:
+            Location:
+              description: Absolute URI of the created document metadata.
+              schema:
+                type: string
+                format: uri
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DocumentResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '413':
+          description: Upload exceeds the 20MB limit.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+    get:
+      tags: [Documents]
+      operationId: listDocuments
+      summary: List the documents of a claim
+      parameters:
+        - name: claimId
+          in: query
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: page
+          in: query
+          required: false
+          schema:
+            type: integer
+            format: int32
+            minimum: 0
+            default: 0
+        - name: size
+          in: query
+          required: false
+          description: Fixed sort `uploadedAt,desc`; paging only.
+          schema:
+            type: integer
+            format: int32
+            minimum: 1
+            default: 20
+      responses:
+        '200':
+          description: One page of document metadata, newest first.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DocumentPageResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+
+  /api/v1/documents/{documentId}:
+    parameters:
+      - $ref: '#/components/parameters/DocumentId'
+    get:
+      tags: [Documents]
+      operationId: getDocument
+      summary: Get document metadata
+      responses:
+        '200':
+          description: The metadata.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DocumentResponse'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    delete:
+      tags: [Documents]
+      operationId: deleteDocument
+      summary: Soft delete a document
+      description: Sets `deleted_at`; the row stays for audit and disappears from reads.
+      responses:
+        '204':
+          description: Deleted (idempotent from the client point of view).
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/v1/documents/{documentId}/content:
+    parameters:
+      - $ref: '#/components/parameters/DocumentId'
+    get:
+      tags: [Documents]
+      operationId: downloadDocument
+      summary: Download the document content
+      responses:
+        '200':
+          description: Raw bytes of the stored file.
+          headers:
+            Content-Disposition:
+              description: Always `attachment` (RFC 5987 filename encoding for non-ASCII names).
+              schema:
+                type: string
+                example: attachment; filename*=UTF-8''perizia.pdf
+            Content-Length:
+              schema:
+                type: integer
+                format: int64
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          description: The metadata exists but the stored object is unreadable (`StorageException`).
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+
+  /actuator/health:
+    get:
+      tags: [Actuator]
+      operationId: health
+      summary: Liveness and readiness probe
+      responses:
+        '200':
+          description: Service is UP.
+          content:
+            application/vnd.spring-boot.actuator.v3+json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: UP
+        '503':
+          description: Service is DOWN.
+
+components:
+  parameters:
+    DocumentId:
+      name: documentId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+
+  responses:
+    BadRequest:
+      description: Invalid or missing parameter, invalid file (e.g. empty content).
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+    NotFound:
+      description: The document does not exist or was deleted.
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+
+  schemas:
+    DocumentResponse:
+      type: object
+      required:
+        - id
+        - claimId
+        - fileName
+        - contentType
+        - sizeBytes
+        - documentType
+        - checksumSha256
+        - uploadedAt
+        - version
+      properties:
+        id:
+          type: string
+          format: uuid
+        claimId:
+          type: string
+          format: uuid
+          description: Logical reference to a core-app claim; not a foreign key.
+        fileName:
+          type: string
+          maxLength: 255
+        contentType:
+          type: string
+          maxLength: 128
+          example: application/pdf
+        sizeBytes:
+          type: integer
+          format: int64
+        documentType:
+          type: string
+          example: POLICY_COPY
+        checksumSha256:
+          type: string
+          description: Lowercase hex SHA-256 of the stored bytes (64 chars).
+          pattern: '^[0-9a-f]{64}$'
+        uploadedAt:
+          type: string
+          format: date-time
+        version:
+          type: integer
+          format: int32
+          minimum: 1
+
+    DocumentPageResponse:
+      type: object
+      required: [content, page, size, totalElements, totalPages]
+      properties:
+        content:
+          type: array
+          items:
+            $ref: '#/components/schemas/DocumentResponse'
+        page:
+          type: integer
+          format: int32
+        size:
+          type: integer
+          format: int32
+        totalElements:
+          type: integer
+          format: int64
+        totalPages:
+          type: integer
+          format: int32
+
+    Problem:
+      type: object
+      description: RFC 9457 problem detail as emitted by Spring's `ProblemDetail`.
+      required: [status, title]
+      properties:
+        type:
+          type: string
+          format: uri
+          default: about:blank
+        title:
+          type: string
+          example: Document not found
+        status:
+          type: integer
+          format: int32
+        detail:
+          type: string
+        instance:
+          type: string
+          format: uri

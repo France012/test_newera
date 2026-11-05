@@ -1,0 +1,30 @@
+# =============================================================================
+# TK-DE445B — normalise line endings across the monorepo.
+# Windows contributors get CRLF only where it is mandatory (mvnw.cmd).
+# =============================================================================
+* text=auto eol=lf
+
+mvnw text eol=lf
+mvnw.cmd text eol=crlf
+*.sh text eol=lf
+*.md text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+*.json text eol=lf
+*.java text eol=lf
+*.ts text eol=lf
+*.tsx text eol=lf
+
+*.jar binary
+*.war binary
+*.png binary
+*.gif binary
+*.jpg binary
+*.ico binary
+*.woff binary
+*.woff2 binary
+
+# Keep generated artefacts out of diffs and language statistics
+**/target/** -linguist-generated
+**/dist/** -linguist-generated
+**/package-lock.json -linguist-generated -diff

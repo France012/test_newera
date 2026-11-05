@@ -1,0 +1,137 @@
+name: Dependency scan (SCA)
+
+# AC-5 — ADR-0006: Trivy is the primary gate on every push (report-only in
+# phase 1: transitive CVEs without a fix must not block a PR), `npm audit`
+# fails on critical, OWASP Dependency-Check runs on a weekly schedule only.
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    - cron: '0 3 * * 1' # Mondays 03:00 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  security-events: write
+
+concurrency:
+  group: dependency-scan-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  trivy-fs:
+    name: Trivy filesystem scan (pom.xml + package-lock.json)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Run Trivy (SARIF)
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          format: sarif
+          output: trivy-results.sarif
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          exit-code: '0'
+
+      - name: Upload Trivy SARIF
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy-results.sarif
+          category: trivy-fs
+
+      - name: Upload Trivy report artefact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: trivy-fs-results
+          path: trivy-results.sarif
+          retention-days: 7
+          if-no-files-found: ignore
+
+  npm-audit:
+    name: npm audit (critical blocking)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Fail on critical vulnerabilities
+        run: npm audit --audit-level=critical
+
+      - name: Report high and above
+        run: npm audit --audit-level=high || true
+
+      - name: Export machine-readable audit
+        if: always()
+        run: npm audit --json > npm-audit.json || true
+
+      - name: Upload npm audit report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: npm-audit
+          path: frontend/npm-audit.json
+          retention-days: 7
+          if-no-files-found: ignore
+
+  owasp-dependency-check:
+    name: OWASP Dependency-Check (weekly)
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+          cache-dependency-path: '**/pom.xml'
+
+      - name: Run OWASP Dependency-Check
+        uses: dependency-check/Dependency-Check_Action@main
+        with:
+          project: claims-platform
+          path: '.'
+          format: 'HTML'
+          out: 'reports'
+          # NVD_API_KEY is optional: without it the run is slower but still works.
+          args: >-
+            --failOnCVSS 9
+            --enableRetired
+        env:
+          NVD_API_KEY: ${{ secrets.NVD_API_KEY }}
+
+      - name: Upload OWASP report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: owasp-dependency-check
+          path: reports
+          retention-days: 30
+          if-no-files-found: ignore
