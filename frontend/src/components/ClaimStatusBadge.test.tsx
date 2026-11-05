@@ -17,6 +17,21 @@ describe('ClaimStatusBadge', () => {
     expect(badge.getAttribute('data-status')).toBe('APPROVED');
   });
 
+  it.each([
+    { status: 'APPRAISAL', label: 'Perizia', tone: 'badge--warning' },
+    { status: 'SETTLEMENT', label: 'Liquidazione', tone: 'badge--info' },
+    { status: 'ARCHIVED', label: 'Archiviata', tone: 'badge--muted' },
+  ])(
+    'renders the new TK-64FBC8 status $status with its label and tone',
+    ({ status, label, tone }) => {
+      render(<ClaimStatusBadge status={status} />);
+
+      const badge = screen.getByText(label);
+      expect(badge.className).toContain(tone);
+      expect(badge.getAttribute('data-status')).toBe(status);
+    },
+  );
+
   it('degrades gracefully on a status the UI does not know yet', () => {
     render(<ClaimStatusBadge status="ON_HOLD" />);
 

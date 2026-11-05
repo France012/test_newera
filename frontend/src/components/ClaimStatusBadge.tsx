@@ -9,9 +9,12 @@ const TONES: Record<ClaimStatus, string> = {
   SUBMITTED: 'info',
   UNDER_REVIEW: 'warning',
   INTEGRATION_REQUESTED: 'attention',
+  APPRAISAL: 'warning',
   APPROVED: 'success',
   REJECTED: 'danger',
+  SETTLEMENT: 'info',
   CLOSED: 'muted',
+  ARCHIVED: 'muted',
 };
 
 export interface ClaimStatusBadgeProps {

@@ -1,18 +1,24 @@
 package it.enterprise.claims.core.application;
 
+import it.enterprise.claims.core.application.dto.AuditEventPageResponse;
 import it.enterprise.claims.core.application.dto.ClaimCreateRequest;
+import it.enterprise.claims.core.application.dto.ClaimDocumentLinkResponse;
 import it.enterprise.claims.core.application.dto.ClaimPageResponse;
 import it.enterprise.claims.core.application.dto.ClaimResponse;
 import it.enterprise.claims.core.application.dto.ClaimStatusHistoryResponse;
 import it.enterprise.claims.core.application.dto.ClaimStatusUpdateRequest;
 import it.enterprise.claims.core.application.dto.DocumentIdsRequest;
+import it.enterprise.claims.core.application.exception.ActorNotFoundException;
 import it.enterprise.claims.core.application.exception.ClaimNotFoundException;
 import it.enterprise.claims.core.application.exception.InvalidClaimRequestException;
 import it.enterprise.claims.core.application.exception.InvalidClaimStatusTransitionException;
 import it.enterprise.claims.core.application.exception.PolicyNotFoundException;
+import it.enterprise.claims.core.domain.model.AuditEventType;
 import it.enterprise.claims.core.domain.model.Claim;
 import it.enterprise.claims.core.domain.model.ClaimStatus;
 import it.enterprise.claims.core.domain.model.Policy;
+import it.enterprise.claims.core.domain.port.ActorRepositoryPort;
+import it.enterprise.claims.core.domain.port.AuditEventPort;
 import it.enterprise.claims.core.domain.port.ClaimDocumentPort;
 import it.enterprise.claims.core.domain.port.ClaimRepositoryPort;
 import it.enterprise.claims.core.domain.port.PolicyRepositoryPort;
@@ -20,8 +26,12 @@ import java.time.Clock;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.time.format.DateTimeFormatter;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
@@ -37,8 +47,12 @@ import org.springframework.transaction.annotation.Transactional;
  *       policy validity period;
  *   <li>opening a claim always starts in {@link ClaimStatus#DRAFT};
  *   <li>every status change must be allowed by the {@link ClaimStatus} state machine, otherwise the
- *       caller gets a 409;
- *   <li>every status change is recorded in the audit trail by the repository adapter.
+ *       caller gets a 409 (the composite foreign key {@code fk_claim_status_history_transition} is
+ *       the second line of defence, at database level);
+ *   <li>entering {@code CLOSED} stamps {@code closedAt}, entering {@code ARCHIVED} stamps {@code
+ *       archivedAt};
+ *   <li>every state change, document link and un-link appends one row to the audit trail, in the
+ *       same transaction as the change itself.
  * </ul>
  */
 @Service
@@ -48,26 +62,39 @@ public class ClaimService {
       DateTimeFormatter.ofPattern("yyyyMMdd");
   private static final int MAX_CLAIM_NUMBER_ATTEMPTS = 3;
   private static final String CLAIM_NUMBER_PREFIX = "CLM-";
+  private static final String CLAIM_ENTITY = "CLAIM";
 
   private final ClaimRepositoryPort claimRepository;
   private final PolicyRepositoryPort policyRepository;
   private final ClaimDocumentPort claimDocumentPort;
+  private final ActorRepositoryPort actorRepository;
+  private final AuditEventPort auditEventPort;
+  private final AuditRecorder auditRecorder;
   private final Clock clock;
 
   /**
    * @param claimRepository claim persistence port
    * @param policyRepository policy lookup port
    * @param claimDocumentPort link-table port
+   * @param actorRepository actor lookup port (validates the asserted {@code actorId})
+   * @param auditEventPort read side of the audit trail
+   * @param auditRecorder audit trail writer
    * @param clock clock used to timestamp idempotency-sensitive values (injectable in tests)
    */
   public ClaimService(
       ClaimRepositoryPort claimRepository,
       PolicyRepositoryPort policyRepository,
       ClaimDocumentPort claimDocumentPort,
+      ActorRepositoryPort actorRepository,
+      AuditEventPort auditEventPort,
+      AuditRecorder auditRecorder,
       Clock clock) {
     this.claimRepository = claimRepository;
     this.policyRepository = policyRepository;
     this.claimDocumentPort = claimDocumentPort;
+    this.actorRepository = actorRepository;
+    this.auditEventPort = auditEventPort;
+    this.auditRecorder = auditRecorder;
     this.clock = clock;
   }
 
@@ -114,7 +141,15 @@ public class ClaimService {
             request.incidentDate(),
             OffsetDateTime.now(clock));
 
-    return ClaimResponse.from(claimRepository.create(claim));
+    Claim created = claimRepository.create(claim);
+    auditRecorder.record(
+        AuditEventType.CLAIM_OPENED,
+        CLAIM_ENTITY,
+        created.id(),
+        created.id(),
+        null,
+        Map.of("claimNumber", created.claimNumber(), "status", created.status().name()));
+    return ClaimResponse.from(created);
   }
 
   /**
@@ -141,9 +176,10 @@ public class ClaimService {
    * Moves a claim to another state, enforcing the state machine.
    *
    * @param claimId claim to update
-   * @param request requested target state and optional note
+   * @param request requested target state, optional note and optional asserted actor
    * @return the updated claim
    * @throws InvalidClaimStatusTransitionException when the transition is not allowed (HTTP 409)
+   * @throws ActorNotFoundException when the asserted {@code actorId} does not exist (HTTP 404)
    */
   @Transactional
   public ClaimResponse changeStatus(UUID claimId, ClaimStatusUpdateRequest request) {
@@ -151,12 +187,36 @@ public class ClaimService {
     if (!claim.canTransitionTo(request.status())) {
       throw new InvalidClaimStatusTransitionException(claimId, claim.status(), request.status());
     }
-    return ClaimResponse.from(
-        claimRepository.updateStatus(claim, request.status(), request.note()));
+    requireActor(request.actorId());
+
+    ClaimStatus previous = claim.status();
+    Claim updated =
+        claimRepository.updateStatus(claim, request.status(), request.note(), request.actorId());
+
+    Map<String, Object> details = new LinkedHashMap<>();
+    details.put("fromStatus", previous.name());
+    details.put("toStatus", request.status().name());
+    if (request.note() != null) {
+      details.put("note", request.note());
+    }
+    if (updated.closedAt() != null) {
+      details.put("closedAt", updated.closedAt().toString());
+    }
+    if (updated.archivedAt() != null) {
+      details.put("archivedAt", updated.archivedAt().toString());
+    }
+    auditRecorder.record(
+        AuditEventType.CLAIM_STATUS_CHANGED,
+        CLAIM_ENTITY,
+        claimId,
+        claimId,
+        request.actorId(),
+        details);
+    return ClaimResponse.from(updated);
   }
 
   /**
-   * @param claimId claim whose audit trail is requested
+   * @param claimId claim whose history is requested
    * @return the transitions in chronological order
    * @throws ClaimNotFoundException when no claim has that id
    */
@@ -169,6 +229,20 @@ public class ClaimService {
   }
 
   /**
+   * @param claimId claim whose audit trail is requested
+   * @param eventType optional filter on the business event type, may be {@code null}
+   * @param pageable page request, newest first
+   * @return one page of audit events
+   * @throws ClaimNotFoundException when no claim has that id
+   */
+  @Transactional(readOnly = true)
+  public AuditEventPageResponse auditEvents(
+      UUID claimId, AuditEventType eventType, Pageable pageable) {
+    load(claimId);
+    return AuditEventPageResponse.from(auditEventPort.findByClaimId(claimId, eventType, pageable));
+  }
+
+  /**
    * Attaches document-service ids to a claim. Idempotent: already linked ids are ignored.
    *
    * @param claimId claim to update
@@ -178,12 +252,68 @@ public class ClaimService {
   @Transactional
   public ClaimResponse attachDocuments(UUID claimId, DocumentIdsRequest request) {
     Claim claim = load(claimId);
+    Set<UUID> before = new LinkedHashSet<>(claim.documentIds());
     List<UUID> documentIds = claimDocumentPort.link(claimId, request.documentIds());
+    for (UUID documentId : documentIds) {
+      if (!before.contains(documentId)) {
+        auditRecorder.record(
+            AuditEventType.CLAIM_DOCUMENT_LINKED,
+            CLAIM_ENTITY,
+            claimId,
+            claimId,
+            null,
+            Map.of("documentId", documentId.toString()));
+      }
+    }
     return ClaimResponse.from(claim.withDocumentIds(documentIds));
+  }
+
+  /**
+   * @param claimId claim whose document links are requested
+   * @param includeUnlinked {@code true} to include the softly detached documents
+   * @return the links, oldest first
+   * @throws ClaimNotFoundException when no claim has that id
+   */
+  @Transactional(readOnly = true)
+  public List<ClaimDocumentLinkResponse> findDocumentLinks(UUID claimId, boolean includeUnlinked) {
+    load(claimId);
+    return claimRepository.findDocumentLinks(claimId).stream()
+        .filter(link -> includeUnlinked || link.isActive())
+        .map(ClaimDocumentLinkResponse::from)
+        .toList();
+  }
+
+  /**
+   * Softly detaches a document from a claim.
+   *
+   * @param claimId claim to update
+   * @param documentId document to detach
+   * @return the closed link
+   * @throws ClaimNotFoundException when no claim has that id
+   */
+  @Transactional
+  public ClaimDocumentLinkResponse unlinkDocument(UUID claimId, UUID documentId) {
+    load(claimId);
+    ClaimDocumentLinkResponse response =
+        ClaimDocumentLinkResponse.from(claimRepository.unlinkDocument(claimId, documentId));
+    auditRecorder.record(
+        AuditEventType.CLAIM_DOCUMENT_UNLINKED,
+        CLAIM_ENTITY,
+        claimId,
+        claimId,
+        null,
+        Map.of("documentId", documentId.toString()));
+    return response;
   }
 
   private Claim load(UUID claimId) {
     return claimRepository.findById(claimId).orElseThrow(() -> new ClaimNotFoundException(claimId));
+  }
+
+  private void requireActor(UUID actorId) {
+    if (actorId != null && actorRepository.findById(actorId).isEmpty()) {
+      throw new ActorNotFoundException(actorId);
+    }
   }
 
   /**

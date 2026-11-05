@@ -13,15 +13,22 @@
  * unknown value instead of crashing on a status added by core-app later.
  */
 
-/** Lifecycle order, mirrored from `core-app` `ClaimStatus`. */
+/**
+ * Lifecycle order, mirrored from `core-app` `ClaimStatus` (10 values, TK-64FBC8).
+ * Declaration order == lifecycle order: it drives the dashboard distribution and the
+ * filter dropdown, so a value added here appears in the right place everywhere.
+ */
 export const CLAIM_STATUSES = [
   'DRAFT',
   'SUBMITTED',
   'UNDER_REVIEW',
   'INTEGRATION_REQUESTED',
+  'APPRAISAL',
   'APPROVED',
   'REJECTED',
+  'SETTLEMENT',
   'CLOSED',
+  'ARCHIVED',
 ] as const;
 
 export type ClaimStatus = (typeof CLAIM_STATUSES)[number];
@@ -32,6 +39,8 @@ export const OPEN_STATUSES: readonly ClaimStatus[] = [
   'SUBMITTED',
   'UNDER_REVIEW',
   'INTEGRATION_REQUESTED',
+  'APPRAISAL',
+  'SETTLEMENT',
 ];
 
 /** Human readable Italian labels for the badges and the filter. */
@@ -40,23 +49,32 @@ export const STATUS_LABELS: Record<ClaimStatus, string> = {
   SUBMITTED: 'Inviata',
   UNDER_REVIEW: 'In lavorazione',
   INTEGRATION_REQUESTED: 'Integrazione richiesta',
+  APPRAISAL: 'Perizia',
   APPROVED: 'Approvata',
   REJECTED: 'Respinta',
+  SETTLEMENT: 'Liquidazione',
   CLOSED: 'Chiusa',
+  ARCHIVED: 'Archiviata',
 };
 
 /**
- * Allowed transitions, mirrored from blueprint §2.3.
+ * Allowed transitions, mirrored from blueprint §3 (14 pairs, TK-64FBC8).
  * The backend stays authoritative: this map only drives the UI affordances.
+ *
+ * Note the breaking change A10: `APPROVED` no longer goes straight to `CLOSED`,
+ * it must pass through `SETTLEMENT` (liquidazione). `ARCHIVED` is terminal.
  */
 export const ALLOWED_TRANSITIONS: Record<ClaimStatus, readonly ClaimStatus[]> = {
   DRAFT: ['SUBMITTED'],
   SUBMITTED: ['UNDER_REVIEW'],
-  UNDER_REVIEW: ['INTEGRATION_REQUESTED', 'APPROVED', 'REJECTED'],
+  UNDER_REVIEW: ['INTEGRATION_REQUESTED', 'APPRAISAL', 'APPROVED', 'REJECTED'],
   INTEGRATION_REQUESTED: ['UNDER_REVIEW'],
-  APPROVED: ['CLOSED'],
+  APPRAISAL: ['UNDER_REVIEW', 'APPROVED', 'REJECTED'],
+  APPROVED: ['SETTLEMENT'],
   REJECTED: ['CLOSED'],
-  CLOSED: [],
+  SETTLEMENT: ['CLOSED'],
+  CLOSED: ['ARCHIVED'],
+  ARCHIVED: [],
 };
 
 /** Claim as returned by `GET /bff/v1/claims` and inside {@link ClaimDetail}. */

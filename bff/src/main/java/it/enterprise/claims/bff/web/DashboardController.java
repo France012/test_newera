@@ -25,20 +25,24 @@ import org.springframework.web.bind.annotation.RestController;
 @Tag(name = "Dashboard", description = "Aggregated counters for the frontend landing page")
 public class DashboardController {
 
-  /** Lifecycle order of the claim states, mirrored from {@code core-app ClaimStatus}. */
+  /** Lifecycle order of the 10 claim states, mirrored from {@code core-app ClaimStatus}. */
   private static final List<String> TRACKED_STATUSES =
       List.of(
           "DRAFT",
           "SUBMITTED",
           "UNDER_REVIEW",
           "INTEGRATION_REQUESTED",
+          "APPRAISAL",
           "APPROVED",
           "REJECTED",
-          "CLOSED");
+          "SETTLEMENT",
+          "CLOSED",
+          "ARCHIVED");
 
   /** States that still require an operator action; they add up to {@code totalOpen}. */
   private static final List<String> OPEN_STATUSES =
-      List.of("DRAFT", "SUBMITTED", "UNDER_REVIEW", "INTEGRATION_REQUESTED");
+      List.of(
+          "DRAFT", "SUBMITTED", "UNDER_REVIEW", "INTEGRATION_REQUESTED", "APPRAISAL", "SETTLEMENT");
 
   private final ClaimsClient claimsClient;
 

@@ -2,14 +2,19 @@ package it.enterprise.claims.core.adapter.out.persistence;
 
 import it.enterprise.claims.core.application.exception.ClaimNotFoundException;
 import it.enterprise.claims.core.domain.model.Claim;
+import it.enterprise.claims.core.domain.model.ClaimDocumentLink;
 import it.enterprise.claims.core.domain.model.ClaimStatus;
 import it.enterprise.claims.core.domain.model.ClaimStatusHistory;
 import it.enterprise.claims.core.domain.port.ClaimRepositoryPort;
+import java.time.OffsetDateTime;
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.Comparator;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
 import org.springframework.data.domain.Page;
@@ -26,10 +31,13 @@ import org.springframework.transaction.annotation.Transactional;
  * <ul>
  *   <li>entity {@code <->} domain translation, so {@code ClaimJpaEntity} never leaves the adapter;
  *   <li>hydration of the denormalised fields the API exposes ({@code policyNumber}, {@code
- *       customerId}) from the referenced policy;
- *   <li>writing the audit row of every status transition, in the same transaction as the status
+ *       customerId}, the author of a transition);
+ *   <li>writing the history row of every status transition, in the same transaction as the status
  *       update, so the trail can never diverge from the state;
- *   <li>batch loading of policies and document ids for list endpoints (no N+1).
+ *   <li>the closure/archival timestamps required by {@code
+ *       ck_claims_closed_at_requires_closed_status} and {@code
+ *       ck_claims_archived_at_requires_archived_status};
+ *   <li>batch loading of policies, documents and actors for the read endpoints (no N+1).
  * </ul>
  */
 @Repository
@@ -41,22 +49,27 @@ public class ClaimRepositoryAdapter implements ClaimRepositoryPort {
   private final ClaimStatusHistoryJpaRepository statusHistoryJpaRepository;
   private final ClaimDocumentJpaRepository claimDocumentJpaRepository;
   private final PolicyJpaRepository policyJpaRepository;
+  private final ActorJpaRepository actorJpaRepository;
 
   /**
    * @param claimJpaRepository access to {@code coreapp.claims}
    * @param statusHistoryJpaRepository access to {@code coreapp.claim_status_history}
    * @param claimDocumentJpaRepository access to {@code coreapp.claim_documents}
    * @param policyJpaRepository access to {@code coreapp.policies} (read-only here)
+   * @param actorJpaRepository access to {@code coreapp.actors} (read-only here, to name the author
+   *     of a transition)
    */
   public ClaimRepositoryAdapter(
       ClaimJpaRepository claimJpaRepository,
       ClaimStatusHistoryJpaRepository statusHistoryJpaRepository,
       ClaimDocumentJpaRepository claimDocumentJpaRepository,
-      PolicyJpaRepository policyJpaRepository) {
+      PolicyJpaRepository policyJpaRepository,
+      ActorJpaRepository actorJpaRepository) {
     this.claimJpaRepository = claimJpaRepository;
     this.statusHistoryJpaRepository = statusHistoryJpaRepository;
     this.claimDocumentJpaRepository = claimDocumentJpaRepository;
     this.policyJpaRepository = policyJpaRepository;
+    this.actorJpaRepository = actorJpaRepository;
   }
 
   @Override
@@ -92,9 +105,7 @@ public class ClaimRepositoryAdapter implements ClaimRepositoryPort {
                 toDomain(
                     entity,
                     findPolicy(entity.getPolicyId()).orElse(null),
-                    claimDocumentJpaRepository.findByClaimId(claimId).stream()
-                        .map(link -> link.getId().getDocumentId())
-                        .toList()));
+                    activeDocumentIds(claimId)));
   }
 
   @Override
@@ -126,7 +137,10 @@ public class ClaimRepositoryAdapter implements ClaimRepositoryPort {
   @Override
   @Transactional(readOnly = true)
   public List<ClaimStatusHistory> findStatusHistory(UUID claimId) {
-    return statusHistoryJpaRepository.findByClaimIdOrderByChangedAtAsc(claimId).stream()
+    List<ClaimStatusHistoryJpaEntity> rows =
+        statusHistoryJpaRepository.findByClaimIdOrderByChangedAtAsc(claimId);
+    Map<UUID, String> actors = loadActorNames(rows);
+    return rows.stream()
         .map(
             entity ->
                 new ClaimStatusHistory(
@@ -135,32 +149,84 @@ public class ClaimRepositoryAdapter implements ClaimRepositoryPort {
                     entity.getFromStatus(),
                     entity.getToStatus(),
                     entity.getNote(),
-                    entity.getChangedAt()))
+                    entity.getChangedAt(),
+                    entity.getActorId(),
+                    entity.getActorId() == null ? null : actors.get(entity.getActorId())))
         .toList();
   }
 
   @Override
   @Transactional
-  public Claim updateStatus(Claim claim, ClaimStatus targetStatus, String note) {
+  public Claim updateStatus(Claim claim, ClaimStatus targetStatus, String note, UUID actorId) {
     ClaimJpaEntity entity =
         claimJpaRepository
             .findById(claim.id())
             .orElseThrow(() -> new ClaimNotFoundException(claim.id()));
 
     ClaimStatus previousStatus = entity.getStatus();
+    OffsetDateTime now = OffsetDateTime.now();
     entity.setStatus(targetStatus);
+    entity.setUpdatedAt(now);
+    if (targetStatus == ClaimStatus.CLOSED && entity.getClosedAt() == null) {
+      entity.setClosedAt(now);
+    }
+    if (targetStatus == ClaimStatus.ARCHIVED && entity.getArchivedAt() == null) {
+      entity.setArchivedAt(now);
+    }
     ClaimJpaEntity saved = claimJpaRepository.saveAndFlush(entity);
 
     statusHistoryJpaRepository.save(
         new ClaimStatusHistoryJpaEntity(
-            UUID.randomUUID(), saved.getId(), previousStatus, targetStatus, note));
+            UUID.randomUUID(), saved.getId(), previousStatus, targetStatus, note, actorId));
 
     return toDomain(
-        saved,
-        findPolicy(saved.getPolicyId()).orElse(null),
-        claimDocumentJpaRepository.findByClaimId(saved.getId()).stream()
-            .map(link -> link.getId().getDocumentId())
-            .toList());
+        saved, findPolicy(saved.getPolicyId()).orElse(null), activeDocumentIds(saved.getId()));
+  }
+
+  @Override
+  @Transactional(readOnly = true)
+  public List<ClaimDocumentLink> findDocumentLinks(UUID claimId) {
+    return claimDocumentJpaRepository.findByClaimId(claimId).stream()
+        .sorted(Comparator.comparing(ClaimDocumentJpaEntity::getLinkedAt))
+        .map(ClaimRepositoryAdapter::toLink)
+        .toList();
+  }
+
+  @Override
+  @Transactional
+  public ClaimDocumentLink unlinkDocument(UUID claimId, UUID documentId) {
+    ClaimDocumentJpaEntity link =
+        claimDocumentJpaRepository
+            .findById(new ClaimDocumentId(claimId, documentId))
+            .orElseThrow(() -> new ClaimNotFoundException(claimId));
+    if (link.isActive()) {
+      link.unlink(OffsetDateTime.now());
+    }
+    return toLink(claimDocumentJpaRepository.saveAndFlush(link));
+  }
+
+  private List<UUID> activeDocumentIds(UUID claimId) {
+    return claimDocumentJpaRepository.findByClaimId(claimId).stream()
+        .filter(ClaimDocumentJpaEntity::isActive)
+        .map(link -> link.getId().getDocumentId())
+        .toList();
+  }
+
+  private Map<UUID, String> loadActorNames(Collection<ClaimStatusHistoryJpaEntity> rows) {
+    List<UUID> actorIds =
+        rows.stream()
+            .map(ClaimStatusHistoryJpaEntity::getActorId)
+            .filter(Objects::nonNull)
+            .distinct()
+            .toList();
+    Map<UUID, String> names = new LinkedHashMap<>();
+    if (actorIds.isEmpty()) {
+      return names;
+    }
+    actorJpaRepository
+        .findAllById(actorIds)
+        .forEach(actor -> names.put(actor.getId(), actor.getDisplayName()));
+    return names;
   }
 
   private Optional<PolicyJpaEntity> findPolicy(UUID policyId) {
@@ -180,11 +246,23 @@ public class ClaimRepositoryAdapter implements ClaimRepositoryPort {
     List<UUID> claimIds = claims.stream().map(ClaimJpaEntity::getId).distinct().toList();
     Map<UUID, List<UUID>> byClaim = new HashMap<>();
     for (ClaimDocumentJpaEntity link : claimDocumentJpaRepository.findByClaimIds(claimIds)) {
+      if (!link.isActive()) {
+        continue;
+      }
       byClaim
           .computeIfAbsent(link.getId().getClaimId(), key -> new ArrayList<>())
           .add(link.getId().getDocumentId());
     }
     return byClaim;
+  }
+
+  private static ClaimDocumentLink toLink(ClaimDocumentJpaEntity entity) {
+    return new ClaimDocumentLink(
+        entity.getId().getClaimId(),
+        entity.getId().getDocumentId(),
+        entity.getLinkedAt(),
+        entity.getLinkedByActorId(),
+        entity.getUnlinkedAt());
   }
 
   private static Claim toDomain(
@@ -201,6 +279,8 @@ public class ClaimRepositoryAdapter implements ClaimRepositoryPort {
         entity.getIncidentDate(),
         entity.getOpenedAt(),
         entity.getUpdatedAt(),
-        documentIds);
+        documentIds,
+        entity.getClosedAt(),
+        entity.getArchivedAt());
   }
 }

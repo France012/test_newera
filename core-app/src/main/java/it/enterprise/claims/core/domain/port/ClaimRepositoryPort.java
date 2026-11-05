@@ -1,6 +1,7 @@
 package it.enterprise.claims.core.domain.port;
 
 import it.enterprise.claims.core.domain.model.Claim;
+import it.enterprise.claims.core.domain.model.ClaimDocumentLink;
 import it.enterprise.claims.core.domain.model.ClaimStatus;
 import it.enterprise.claims.core.domain.model.ClaimStatusHistory;
 import java.util.List;
@@ -55,12 +56,28 @@ public interface ClaimRepositoryPort {
   List<ClaimStatusHistory> findStatusHistory(UUID claimId);
 
   /**
-   * Applies a status change and appends the corresponding audit entry.
+   * Applies a status change and appends the corresponding history row.
    *
    * @param claim the claim as currently known by the application (source state of the transition)
    * @param targetStatus state to move to
    * @param note optional reason, may be {@code null}
+   * @param actorId actor who performs the transition, may be {@code null} until OIDC is in place
    * @return the updated claim
    */
-  Claim updateStatus(Claim claim, ClaimStatus targetStatus, String note);
+  Claim updateStatus(Claim claim, ClaimStatus targetStatus, String note, UUID actorId);
+
+  /**
+   * @param claimId claim whose document links are requested
+   * @return every link row of the claim, detached ones included, oldest first
+   */
+  List<ClaimDocumentLink> findDocumentLinks(UUID claimId);
+
+  /**
+   * Softly detaches a document from a claim (the row survives, {@code unlinkedAt} is set).
+   *
+   * @param claimId claim id
+   * @param documentId document id
+   * @return the closed link
+   */
+  ClaimDocumentLink unlinkDocument(UUID claimId, UUID documentId);
 }

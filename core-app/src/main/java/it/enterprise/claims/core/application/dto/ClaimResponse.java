@@ -21,6 +21,8 @@ import java.util.UUID;
  * @param openedAt opening timestamp
  * @param updatedAt last modification timestamp
  * @param documentIds ids of the documents attached through document-service
+ * @param closedAt timestamp of the transition into {@code CLOSED}, may be {@code null}
+ * @param archivedAt timestamp of the transition into {@code ARCHIVED}, may be {@code null}
  */
 public record ClaimResponse(
     UUID id,
@@ -33,7 +35,9 @@ public record ClaimResponse(
     LocalDate incidentDate,
     OffsetDateTime openedAt,
     OffsetDateTime updatedAt,
-    List<UUID> documentIds) {
+    List<UUID> documentIds,
+    OffsetDateTime closedAt,
+    OffsetDateTime archivedAt) {
 
   /**
    * @param claim domain claim to expose
@@ -51,6 +55,8 @@ public record ClaimResponse(
         claim.incidentDate(),
         claim.openedAt(),
         claim.updatedAt(),
-        claim.documentIds());
+        claim.documentIds(),
+        claim.closedAt(),
+        claim.archivedAt());
   }
 }

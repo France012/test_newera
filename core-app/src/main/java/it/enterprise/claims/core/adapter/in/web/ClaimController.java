@@ -4,6 +4,7 @@ import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import it.enterprise.claims.core.application.ClaimService;
 import it.enterprise.claims.core.application.dto.ClaimCreateRequest;
+import it.enterprise.claims.core.application.dto.ClaimDocumentLinkResponse;
 import it.enterprise.claims.core.application.dto.ClaimPageResponse;
 import it.enterprise.claims.core.application.dto.ClaimResponse;
 import it.enterprise.claims.core.application.dto.ClaimStatusHistoryResponse;
@@ -18,6 +19,7 @@ import java.util.Set;
 import java.util.UUID;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -135,5 +137,33 @@ public class ClaimController {
   public ClaimResponse attachDocuments(
       @PathVariable UUID claimId, @Valid @RequestBody DocumentIdsRequest request) {
     return claimService.attachDocuments(claimId, request);
+  }
+
+  /**
+   * @param claimId claim whose links are requested
+   * @param includeUnlinked {@code true} to include the softly detached documents
+   * @return the claim ⇄ document links, oldest first
+   */
+  @GetMapping("/{claimId}/documents")
+  @Operation(summary = "List the document links of a claim (attached by default)")
+  public List<ClaimDocumentLinkResponse> documents(
+      @PathVariable UUID claimId,
+      @RequestParam(defaultValue = "false") boolean includeUnlinked) {
+    return claimService.findDocumentLinks(claimId, includeUnlinked);
+  }
+
+  /**
+   * Softly detaches a document: the link row survives so the attachment history stays auditable.
+   *
+   * @param claimId claim to update
+   * @param documentId document to detach
+   * @return 204
+   */
+  @DeleteMapping("/{claimId}/documents/{documentId}")
+  @Operation(summary = "Detach a document from a claim (soft, history preserved)")
+  public ResponseEntity<Void> detachDocument(
+      @PathVariable UUID claimId, @PathVariable UUID documentId) {
+    claimService.unlinkDocument(claimId, documentId);
+    return ResponseEntity.noContent().build();
   }
 }

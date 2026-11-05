@@ -28,6 +28,9 @@ import java.util.UUID;
  * @param openedAt timestamp the claim was opened
  * @param updatedAt timestamp of the last modification
  * @param documentIds document-service ids attached to this claim, never {@code null}
+ * @param closedAt timestamp of the transition into {@link ClaimStatus#CLOSED}, may be {@code null}
+ * @param archivedAt timestamp of the transition into {@link ClaimStatus#ARCHIVED}, may be {@code
+ *     null}
  */
 public record Claim(
     UUID id,
@@ -41,7 +44,55 @@ public record Claim(
     LocalDate incidentDate,
     OffsetDateTime openedAt,
     OffsetDateTime updatedAt,
-    List<UUID> documentIds) {
+    List<UUID> documentIds,
+    OffsetDateTime closedAt,
+    OffsetDateTime archivedAt) {
+
+  /**
+   * Backwards-compatible constructor for a claim that is neither closed nor archived.
+   *
+   * @param id identifier
+   * @param claimNumber business key
+   * @param policyId policy the claim refers to
+   * @param policyNumber business key of that policy
+   * @param customerId owner of the policy
+   * @param claimType classification of the claim
+   * @param status current lifecycle state
+   * @param description free-text description, may be {@code null}
+   * @param incidentDate date of the incident
+   * @param openedAt opening timestamp
+   * @param updatedAt last modification timestamp
+   * @param documentIds attached document ids
+   */
+  public Claim(
+      UUID id,
+      String claimNumber,
+      UUID policyId,
+      String policyNumber,
+      UUID customerId,
+      String claimType,
+      ClaimStatus status,
+      String description,
+      LocalDate incidentDate,
+      OffsetDateTime openedAt,
+      OffsetDateTime updatedAt,
+      List<UUID> documentIds) {
+    this(
+        id,
+        claimNumber,
+        policyId,
+        policyNumber,
+        customerId,
+        claimType,
+        status,
+        description,
+        incidentDate,
+        openedAt,
+        updatedAt,
+        documentIds,
+        null,
+        null);
+  }
 
   /** Compact constructor: enforces the invariants the database also enforces. */
   public Claim {
@@ -105,7 +156,8 @@ public record Claim(
   /**
    * @param newStatus state to move to
    * @param when timestamp of the change
-   * @return a copy of this claim in the new state
+   * @return a copy of this claim in the new state, with the closure/archival timestamp set when the
+   *     new state requires it
    */
   public Claim withStatus(ClaimStatus newStatus, OffsetDateTime when) {
     return new Claim(
@@ -120,7 +172,9 @@ public record Claim(
         incidentDate,
         openedAt,
         when,
-        documentIds);
+        documentIds,
+        newStatus == ClaimStatus.CLOSED && closedAt == null ? when : closedAt,
+        newStatus == ClaimStatus.ARCHIVED && archivedAt == null ? when : archivedAt);
   }
 
   /**
@@ -140,6 +194,23 @@ public record Claim(
         incidentDate,
         openedAt,
         updatedAt,
-        newDocumentIds);
+        newDocumentIds,
+        closedAt,
+        archivedAt);
+  }
+
+  /**
+   * @return {@code true} when the claim has been closed (chiusa) and cannot go back to an earlier
+   *     state of the workflow
+   */
+  public boolean isClosed() {
+    return status == ClaimStatus.CLOSED || status == ClaimStatus.ARCHIVED;
+  }
+
+  /**
+   * @return {@code true} when the claim has been archived (archiviata), the terminal state
+   */
+  public boolean isArchived() {
+    return status == ClaimStatus.ARCHIVED;
   }
 }

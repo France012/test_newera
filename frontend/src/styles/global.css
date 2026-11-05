@@ -448,6 +448,10 @@ a:hover {
   background: var(--c-attention);
 }
 
+.distribution__fill--appraisal {
+  background: #d18e12;
+}
+
 .distribution__fill--approved {
   background: var(--c-success);
 }
@@ -456,8 +460,16 @@ a:hover {
   background: var(--c-danger);
 }
 
+.distribution__fill--settlement {
+  background: var(--c-info);
+}
+
 .distribution__fill--closed {
   background: #7a8698;
+}
+
+.distribution__fill--archived {
+  background: #a7b0bd;
 }
 
 .distribution__count {

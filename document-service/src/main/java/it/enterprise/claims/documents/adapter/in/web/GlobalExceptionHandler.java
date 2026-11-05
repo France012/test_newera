@@ -1,7 +1,10 @@
 package it.enterprise.claims.documents.adapter.in.web;
 
 import it.enterprise.claims.documents.application.exception.DocumentNotFoundException;
+import it.enterprise.claims.documents.application.exception.DocumentOnLegalHoldException;
+import it.enterprise.claims.documents.application.exception.DocumentVersionConflictException;
 import it.enterprise.claims.documents.application.exception.InvalidDocumentException;
+import it.enterprise.claims.documents.application.exception.RetentionViolationException;
 import it.enterprise.claims.documents.application.exception.StorageException;
 import jakarta.servlet.http.HttpServletRequest;
 import java.net.URI;
@@ -109,6 +112,45 @@ public class GlobalExceptionHandler {
         "Invalid request parameter",
         "Parameter '" + ex.getName() + "' has an invalid value: " + ex.getValue(),
         request);
+  }
+
+  /**
+   * @param ex raised when the retention date is not acceptable
+   * @param request current request
+   * @return 400 problem
+   */
+  @ExceptionHandler(RetentionViolationException.class)
+  public ProblemDetail handleRetention(
+      RetentionViolationException ex, HttpServletRequest request) {
+    return problem(HttpStatus.BAD_REQUEST, "Invalid retention policy", ex.getMessage(), request);
+  }
+
+  /**
+   * @param ex raised when the document is on legal hold
+   * @param request current request
+   * @return 409 problem
+   */
+  @ExceptionHandler(DocumentOnLegalHoldException.class)
+  public ProblemDetail handleLegalHold(
+      DocumentOnLegalHoldException ex, HttpServletRequest request) {
+    ProblemDetail detail =
+        problem(HttpStatus.CONFLICT, "Document on legal hold", ex.getMessage(), request);
+    detail.setProperty("documentId", ex.getDocumentId());
+    return detail;
+  }
+
+  /**
+   * @param ex raised when two callers create a version of the same document concurrently
+   * @param request current request
+   * @return 409 problem
+   */
+  @ExceptionHandler(DocumentVersionConflictException.class)
+  public ProblemDetail handleVersionConflict(
+      DocumentVersionConflictException ex, HttpServletRequest request) {
+    ProblemDetail detail =
+        problem(HttpStatus.CONFLICT, "Document version conflict", ex.getMessage(), request);
+    detail.setProperty("documentKey", ex.getDocumentKey());
+    return detail;
   }
 
   /**

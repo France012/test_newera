@@ -1,9 +1,13 @@
 package it.enterprise.claims.core.adapter.in.web;
 
+import it.enterprise.claims.core.application.exception.ActorNotFoundException;
 import it.enterprise.claims.core.application.exception.ClaimNotFoundException;
+import it.enterprise.claims.core.application.exception.DuplicateActorException;
+import it.enterprise.claims.core.application.exception.InvalidAssignmentException;
 import it.enterprise.claims.core.application.exception.InvalidClaimRequestException;
 import it.enterprise.claims.core.application.exception.InvalidClaimStatusTransitionException;
 import it.enterprise.claims.core.application.exception.PolicyNotFoundException;
+import it.enterprise.claims.core.application.exception.UnknownRoleException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.ConstraintViolationException;
 import java.net.URI;
@@ -58,6 +62,55 @@ public class GlobalExceptionHandler {
   public ProblemDetail handlePolicyNotFound(
       PolicyNotFoundException ex, HttpServletRequest request) {
     return problem(HttpStatus.NOT_FOUND, "Policy not found", ex.getMessage(), request);
+  }
+
+  /**
+   * @param ex raised when the asserted {@code actorId} does not exist
+   * @param request current request
+   * @return 404 problem
+   */
+  @ExceptionHandler(ActorNotFoundException.class)
+  public ProblemDetail handleActorNotFound(
+      ActorNotFoundException ex, HttpServletRequest request) {
+    return problem(HttpStatus.NOT_FOUND, "Actor not found", ex.getMessage(), request);
+  }
+
+  /**
+   * @param ex raised when an actor is registered twice with the same subject
+   * @param request current request
+   * @return 409 problem
+   */
+  @ExceptionHandler(DuplicateActorException.class)
+  public ProblemDetail handleDuplicateActor(
+      DuplicateActorException ex, HttpServletRequest request) {
+    ProblemDetail detail =
+        problem(HttpStatus.CONFLICT, "Actor already registered", ex.getMessage(), request);
+    detail.setProperty("subjectRef", ex.getSubjectRef());
+    return detail;
+  }
+
+  /**
+   * @param ex raised when a role code is outside the reference data
+   * @param request current request
+   * @return 400 problem
+   */
+  @ExceptionHandler(UnknownRoleException.class)
+  public ProblemDetail handleUnknownRole(UnknownRoleException ex, HttpServletRequest request) {
+    ProblemDetail detail =
+        problem(HttpStatus.BAD_REQUEST, "Unknown role", ex.getMessage(), request);
+    detail.setProperty("roleCode", ex.getRoleCode());
+    return detail;
+  }
+
+  /**
+   * @param ex raised when an assignment violates the state of the actor or of the claim
+   * @param request current request
+   * @return 409 problem
+   */
+  @ExceptionHandler(InvalidAssignmentException.class)
+  public ProblemDetail handleInvalidAssignment(
+      InvalidAssignmentException ex, HttpServletRequest request) {
+    return problem(HttpStatus.CONFLICT, "Invalid assignment", ex.getMessage(), request);
   }
 
   /**

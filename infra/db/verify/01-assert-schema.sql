@@ -15,8 +15,9 @@
 --   design document (wrong type, lost index, lost CHECK, lost ON DELETE CASCADE).
 --
 -- WHEN TO RUN
---   * in CI, after `flyway migrate` (or after the two V1 scripts) against the
---     PostgreSQL service container — see §8-bis for the ready-made job snippet;
+--   * in CI, after `flyway migrate` (or after the V1 + V2 scripts of both
+--     modules) against the PostgreSQL service container — see §8-bis for the
+--     ready-made job snippet;
 --   * locally after `psql -f core-app/.../V1__init_claims.sql` etc.
 --   It must be run with ON_ERROR_STOP so the first violation aborts the job.
 --
@@ -26,14 +27,14 @@
 --
 -- HOW TO READ THE OUTPUT
 --   Every assertion is a `select pg_temp.assert_schema(...)` returning void, so psql
---   prints one empty row per assertion (92 total): that silence IS the pass signal.
+--   prints one empty row per assertion (200 total): that silence IS the pass signal.
 --   Only the last statement prints real values (the summary row below). Redirect with
 --   `> /dev/null` if the CI log must stay short — the exit code carries the verdict.
 --
 -- SUCCESS OUTPUT (exit code 0)
 --   one row per assertion group + a final row:
---     SCHEMA CONTRACT OK | 92 assertions_passed | 6 tables, 2 schemas, 29 named
---     constraints, 9 indexes, 7 ClaimStatus values
+--     SCHEMA CONTRACT OK | 200 assertions_passed | 12 tables, 2 schemas, 77 named
+--     constraints, 24 indexes, 10 ClaimStatus values, 14 transition rules
 -- FAILURE OUTPUT (exit code 1)
 --   ERROR:  SCHEMA CONTRACT VIOLATION: coreapp.claims.status must be varchar(32) NOT NULL
 --   HINT:   docs/db/README.md §4 ... — the migration and the design document diverged
@@ -260,6 +261,31 @@ select pg_temp.assert_schema(
     to_regclass('documents.documents') is not null,
     'table documents.documents must exist (document metadata)');
 
+-- TK-64FBC8 tables: attori, ruoli, assegnazioni, audit trail e regole di stato.
+select pg_temp.assert_schema(
+    to_regclass('coreapp.roles') is not null,
+    'table coreapp.roles must exist (lookup dei ruoli, reference data)');
+
+select pg_temp.assert_schema(
+    to_regclass('coreapp.actors') is not null,
+    'table coreapp.actors must exist (attori / utenti)');
+
+select pg_temp.assert_schema(
+    to_regclass('coreapp.actor_roles') is not null,
+    'table coreapp.actor_roles must exist (ruoli concessi a un attore)');
+
+select pg_temp.assert_schema(
+    to_regclass('coreapp.claim_assignments') is not null,
+    'table coreapp.claim_assignments must exist (attore + ruolo su una pratica)');
+
+select pg_temp.assert_schema(
+    to_regclass('coreapp.audit_events') is not null,
+    'table coreapp.audit_events must exist (append-only audit trail)');
+
+select pg_temp.assert_schema(
+    to_regclass('coreapp.claim_status_transition') is not null,
+    'table coreapp.claim_status_transition must exist (state machine rules)');
+
 -- No table may leak into the wrong schema / into public.
 select pg_temp.assert_schema(
     not exists (
@@ -268,11 +294,16 @@ select pg_temp.assert_schema(
          where t.table_schema in ('public', 'coreapp', 'documents')
            and t.table_type = 'BASE TABLE'
            and t.table_name in ('customers', 'policies', 'claims',
-                                'claim_status_history', 'claim_documents', 'documents')
+                                'claim_status_history', 'claim_documents', 'documents',
+                                'roles', 'actors', 'actor_roles', 'claim_assignments',
+                                'audit_events', 'claim_status_transition')
            and not (
                     (t.table_schema = 'coreapp'
                      and t.table_name in ('customers', 'policies', 'claims',
-                                          'claim_status_history', 'claim_documents'))
+                                          'claim_status_history', 'claim_documents',
+                                          'roles', 'actors', 'actor_roles',
+                                          'claim_assignments', 'audit_events',
+                                          'claim_status_transition'))
                  or (t.table_schema = 'documents' and t.table_name = 'documents')
                 )
     ),
@@ -440,10 +471,12 @@ select pg_temp.assert_schema(
 -- Adding/removing an enum constant therefore requires migration + this file + entity.
 select pg_temp.assert_schema(
     pg_temp.check_literals('coreapp', 'claims', 'ck_claims_status')
-        = array['APPROVED', 'CLOSED', 'DRAFT', 'INTEGRATION_REQUESTED',
-                'REJECTED', 'SUBMITTED', 'UNDER_REVIEW'],
-    'ck_claims_status must accept exactly the 7 ClaimStatus values '
-    '(DRAFT, SUBMITTED, UNDER_REVIEW, INTEGRATION_REQUESTED, APPROVED, REJECTED, CLOSED)');
+        = array['APPRAISAL', 'APPROVED', 'ARCHIVED', 'CLOSED', 'DRAFT',
+                'INTEGRATION_REQUESTED', 'REJECTED', 'SETTLEMENT', 'SUBMITTED',
+                'UNDER_REVIEW'],
+    'ck_claims_status must accept exactly the 10 ClaimStatus values '
+    '(DRAFT, SUBMITTED, UNDER_REVIEW, INTEGRATION_REQUESTED, APPRAISAL, APPROVED, '
+    'REJECTED, SETTLEMENT, CLOSED, ARCHIVED)');
 
 -- DD-7: no native PostgreSQL ENUM type may be used for statuses (ALTER TYPE would lock).
 select pg_temp.assert_schema(
@@ -510,15 +543,17 @@ select pg_temp.assert_schema(
 
 select pg_temp.assert_schema(
     pg_temp.check_literals('coreapp', 'claim_status_history', 'ck_claim_status_history_from_status')
-        = array['APPROVED', 'CLOSED', 'DRAFT', 'INTEGRATION_REQUESTED',
-                'REJECTED', 'SUBMITTED', 'UNDER_REVIEW'],
-    'ck_claim_status_history_from_status must accept exactly the 7 ClaimStatus values');
+        = array['APPRAISAL', 'APPROVED', 'ARCHIVED', 'CLOSED', 'DRAFT',
+                'INTEGRATION_REQUESTED', 'REJECTED', 'SETTLEMENT', 'SUBMITTED',
+                'UNDER_REVIEW'],
+    'ck_claim_status_history_from_status must accept exactly the 10 ClaimStatus values');
 
 select pg_temp.assert_schema(
     pg_temp.check_literals('coreapp', 'claim_status_history', 'ck_claim_status_history_to_status')
-        = array['APPROVED', 'CLOSED', 'DRAFT', 'INTEGRATION_REQUESTED',
-                'REJECTED', 'SUBMITTED', 'UNDER_REVIEW'],
-    'ck_claim_status_history_to_status must accept exactly the 7 ClaimStatus values');
+        = array['APPRAISAL', 'APPROVED', 'ARCHIVED', 'CLOSED', 'DRAFT',
+                'INTEGRATION_REQUESTED', 'REJECTED', 'SETTLEMENT', 'SUBMITTED',
+                'UNDER_REVIEW'],
+    'ck_claim_status_history_to_status must accept exactly the 10 ClaimStatus values');
 
 select pg_temp.assert_schema(
     pg_temp.has_constraint('coreapp', 'claim_status_history',
@@ -663,11 +698,14 @@ select pg_temp.assert_schema(
           from pg_constraint con
           join pg_class rel on rel.oid = con.conrelid
           join pg_namespace nsp on nsp.oid = rel.relnamespace
+          join pg_attribute att on att.attrelid = con.conrelid and att.attnum = any (con.conkey)
          where nsp.nspname = 'documents'
            and rel.relname = 'documents'
            and con.contype = 'f'
+           and att.attname = 'claim_id'
     ),
-    'documents.documents must have no foreign key (claim_id is a cross-service reference, DD-5)');
+    'documents.documents.claim_id must NOT have a foreign key (cross-service reference, DD-5); '
+    'fk_documents_supersedes is intra-schema and therefore allowed');
 
 select pg_temp.assert_schema(
     pg_temp.has_index('documents', 'documents', 'idx_documents_claim'),
@@ -684,7 +722,522 @@ select pg_temp.assert_schema(
     'index idx_documents_uploaded_at must exist with DESC ordering (latest uploads)');
 
 -- =============================================================================
--- 9. Flyway bookkeeping — only when the schemas were migrated by Flyway
+-- 9. coreapp.claims — estensioni TK-64FBC8 (docs/db/README.md §4.3)
+--    Date di chiusura/archiviazione e coerenza con la macchina a stati.
+-- =============================================================================
+select pg_temp.assert_schema(
+    pg_temp.has_column('coreapp', 'claims', 'closed_at', 'timestamp with time zone', null, true),
+    'coreapp.claims.closed_at must be timestamptz NULL (chiusa)');
+
+select pg_temp.assert_schema(
+    pg_temp.has_column('coreapp', 'claims', 'archived_at', 'timestamp with time zone', null, true),
+    'coreapp.claims.archived_at must be timestamptz NULL (archiviata)');
+
+select pg_temp.assert_schema(
+    pg_temp.has_constraint('coreapp', 'claims',
+                           'ck_claims_closed_at_requires_closed_status', 'c'),
+    'ck_claims_closed_at_requires_closed_status (closed_at only for CLOSED/ARCHIVED) is missing');
+
+select pg_temp.assert_schema(
+    pg_temp.has_constraint('coreapp', 'claims',
+                           'ck_claims_archived_at_requires_archived_status', 'c'),
+    'ck_claims_archived_at_requires_archived_status (archived_at only for ARCHIVED) is missing');
+
+select pg_temp.assert_schema(
+    pg_temp.has_constraint('coreapp', 'claims', 'ck_claims_closed_at_after_opened_at', 'c'),
+    'ck_claims_closed_at_after_opened_at (closed_at >= opened_at) CHECK is missing');
+
+select pg_temp.assert_schema(
+    pg_temp.has_index('coreapp', 'claims', 'idx_claims_closed_at', '%where%closed_at is not null%'),
+    'index idx_claims_closed_at must exist as PARTIAL (where closed_at is not null)');
+
+-- =============================================================================
+-- 10. coreapp.claim_status_history — autore + coppia di transizione (A3)
+-- =============================================================================
+select pg_temp.assert_schema(
+    pg_temp.has_column('coreapp', 'claim_status_history', 'actor_id', 'uuid', null, true),
+    'coreapp.claim_status_history.actor_id must be uuid NULL (historical rows have no actor)');
+
+select pg_temp.assert_schema(
+    pg_temp.fk_delete_rule('coreapp', 'claim_status_history',
+                           'fk_claim_status_history_actor') = 'set null',
+    'fk_claim_status_history_actor must be ON DELETE SET NULL (the history survives the actor)');
+
+select pg_temp.assert_schema(
+    pg_temp.has_constraint('coreapp', 'claim_status_history',
+                           'fk_claim_status_history_transition', 'f',
+                           '%foreign key (from_status, to_status)%'),
+    'fk_claim_status_history_transition must be the composite FK (from_status, to_status) to '
+    'coreapp.claim_status_transition (state machine enforced by the database, A3)');
+
+-- =============================================================================
+-- 11. coreapp.claim_documents — soft un-link (docs/db/README.md §4.5)
+-- =============================================================================
+select pg_temp.assert_schema(
+    pg_temp.has_column('coreapp', 'claim_documents', 'linked_by_actor_id', 'uuid', null, true),
+    'coreapp.claim_documents.linked_by_actor_id must be uuid NULL');
+
+select pg_temp.assert_schema(
+    pg_temp.has_column('coreapp', 'claim_documents', 'unlinked_at',
+                       'timestamp with time zone', null, true),
+    'coreapp.claim_documents.unlinked_at must be timestamptz NULL (soft un-link)');
+
+select pg_temp.assert_schema(
+    pg_temp.fk_delete_rule('coreapp', 'claim_documents',
+                           'fk_claim_documents_linked_by_actor') = 'set null',
+    'fk_claim_documents_linked_by_actor must be ON DELETE SET NULL');
+
+select pg_temp.assert_schema(
+    pg_temp.has_constraint('coreapp', 'claim_documents',
+                           'ck_claim_documents_unlinked_after_linked', 'c'),
+    'ck_claim_documents_unlinked_after_linked (unlinked_at >= linked_at) CHECK is missing');
+
+select pg_temp.assert_schema(
+    pg_temp.has_index('coreapp', 'claim_documents', 'idx_claim_documents_active',
+                      '%where%unlinked_at is null%'),
+    'index idx_claim_documents_active must exist as PARTIAL (where unlinked_at is null)');
+
+-- =============================================================================
+-- 12. coreapp.roles — lookup dei ruoli (reference data, seeded)
+-- =============================================================================
+select pg_temp.assert_schema(
+    pg_temp.has_column('coreapp', 'roles', 'code', 'character varying', 32, false),
+    'coreapp.roles.code must be varchar(32) NOT NULL');
+
+select pg_temp.assert_schema(
+    pg_temp.has_column('coreapp', 'roles', 'name', 'character varying', 100, false),
+    'coreapp.roles.name must be varchar(100) NOT NULL');
+
+select pg_temp.assert_schema(
+    pg_temp.has_column('coreapp', 'roles', 'description', 'character varying', 500, true),
+    'coreapp.roles.description must be varchar(500) NULL');
+
+select pg_temp.assert_schema(
+    pg_temp.has_column('coreapp', 'roles', 'created_at', 'timestamp with time zone', null, false),
+    'coreapp.roles.created_at must be timestamptz NOT NULL');
+
+select pg_temp.assert_schema(
+    pg_temp.key_columns('coreapp', 'roles', 'pk_roles') = array['code'],
+    'pk_roles must be the business key (code): roles are identified by code everywhere');
+
+select pg_temp.assert_schema(
+    pg_temp.has_constraint('coreapp', 'roles', 'ck_roles_code_format', 'c'),
+    'ck_roles_code_format (^[A-Z][A-Z0-9_]{2,31}$) CHECK is missing');
+
+select pg_temp.assert_schema(
+    pg_temp.has_constraint('coreapp', 'roles', 'ck_roles_name_not_blank', 'c'),
+    'ck_roles_name_not_blank CHECK is missing');
+
+select pg_temp.assert_schema(
+    (select array_agg(r.code::text order by r.code::text) from coreapp.roles r)
+        = array['ADMIN', 'APPRAISER', 'AUDITOR', 'CLAIMS_OFFICER', 'SETTLEMENT_OFFICER'],
+    'coreapp.roles must be seeded with the 5 reference roles '
+    '(CLAIMS_OFFICER, APPRAISER, SETTLEMENT_OFFICER, AUDITOR, ADMIN)');
+
+-- =============================================================================
+-- 13. coreapp.actors — attori / utenti (docs/db/README.md §4.7)
+-- =============================================================================
+select pg_temp.assert_schema(
+    pg_temp.has_column('coreapp', 'actors', 'id', 'uuid', null, false),
+    'coreapp.actors.id must be uuid NOT NULL');
+
+select pg_temp.assert_schema(
+    pg_temp.has_column('coreapp', 'actors', 'subject_ref', 'character varying', 128, false),
+    'coreapp.actors.subject_ref must be varchar(128) NOT NULL (external IdP subject)');
+
+select pg_temp.assert_schema(
+    pg_temp.has_column('coreapp', 'actors', 'display_name', 'character varying', 200, false),
+    'coreapp.actors.display_name must be varchar(200) NOT NULL');
+
+select pg_temp.assert_schema(
+    pg_temp.has_column('coreapp', 'actors', 'email', 'character varying', 255, true),
+    'coreapp.actors.email must be varchar(255) NULL');
+
+select pg_temp.assert_schema(
+    pg_temp.has_column('coreapp', 'actors', 'actor_type', 'character varying', 32, false),
+    'coreapp.actors.actor_type must be varchar(32) NOT NULL');
+
+select pg_temp.assert_schema(
+    pg_temp.has_column('coreapp', 'actors', 'enabled', 'boolean', null, false),
+    'coreapp.actors.enabled must be boolean NOT NULL');
+
+select pg_temp.assert_schema(
+    pg_temp.has_column('coreapp', 'actors', 'created_at', 'timestamp with time zone', null, false)
+        and pg_temp.has_column('coreapp', 'actors', 'updated_at',
+                               'timestamp with time zone', null, false),
+    'coreapp.actors.created_at / updated_at must be timestamptz NOT NULL');
+
+select pg_temp.assert_schema(
+    pg_temp.has_column('coreapp', 'actors', 'version', 'bigint', null, false),
+    'coreapp.actors.version must be bigint NOT NULL (Hibernate @Version)');
+
+select pg_temp.assert_schema(
+    pg_temp.has_column('coreapp', 'actors', 'deleted_at', 'timestamp with time zone', null, true),
+    'coreapp.actors.deleted_at must be timestamptz NULL (DD-6 soft delete)');
+
+select pg_temp.assert_schema(
+    pg_temp.key_columns('coreapp', 'actors', 'pk_actors') = array['id'],
+    'pk_actors must be the single-column primary key (id)');
+
+select pg_temp.assert_schema(
+    pg_temp.has_constraint('coreapp', 'actors', 'uk_actors_subject_ref', 'u'),
+    'uk_actors_subject_ref unique constraint is missing (identity is reactivated, never re-created)');
+
+select pg_temp.assert_schema(
+    pg_temp.has_constraint('coreapp', 'actors', 'ck_actors_subject_ref_format', 'c'),
+    'ck_actors_subject_ref_format CHECK is missing');
+
+select pg_temp.assert_schema(
+    pg_temp.has_constraint('coreapp', 'actors', 'ck_actors_actor_type', 'c',
+                           '%INTERNAL%EXTERNAL%SYSTEM%'),
+    'ck_actors_actor_type must accept exactly INTERNAL / EXTERNAL / SYSTEM');
+
+select pg_temp.assert_schema(
+    pg_temp.has_constraint('coreapp', 'actors', 'ck_actors_version_non_negative', 'c'),
+    'ck_actors_version_non_negative (version >= 0) CHECK is missing');
+
+select pg_temp.assert_schema(
+    pg_temp.has_constraint('coreapp', 'actors', 'ck_actors_deleted_at_after_created_at', 'c'),
+    'ck_actors_deleted_at_after_created_at CHECK is missing');
+
+select pg_temp.assert_schema(
+    pg_temp.has_index('coreapp', 'actors', 'idx_actors_type_enabled',
+                      '%where%deleted_at is null%'),
+    'index idx_actors_type_enabled must exist as PARTIAL (live enabled actors)');
+
+select pg_temp.assert_schema(
+    pg_temp.has_index('coreapp', 'actors', 'idx_actors_display_name', '%lower%'),
+    'index idx_actors_display_name must be on lower(display_name) (case-insensitive search)');
+
+-- =============================================================================
+-- 14. coreapp.actor_roles — ruoli concessi a un attore
+-- =============================================================================
+select pg_temp.assert_schema(
+    pg_temp.has_column('coreapp', 'actor_roles', 'actor_id', 'uuid', null, false),
+    'coreapp.actor_roles.actor_id must be uuid NOT NULL');
+
+select pg_temp.assert_schema(
+    pg_temp.has_column('coreapp', 'actor_roles', 'role_code', 'character varying', 32, false),
+    'coreapp.actor_roles.role_code must be varchar(32) NOT NULL');
+
+select pg_temp.assert_schema(
+    pg_temp.has_column('coreapp', 'actor_roles', 'granted_at',
+                       'timestamp with time zone', null, false),
+    'coreapp.actor_roles.granted_at must be timestamptz NOT NULL');
+
+select pg_temp.assert_schema(
+    pg_temp.has_column('coreapp', 'actor_roles', 'granted_by', 'uuid', null, true),
+    'coreapp.actor_roles.granted_by must be uuid NULL');
+
+select pg_temp.assert_schema(
+    pg_temp.has_column('coreapp', 'actor_roles', 'revoked_at',
+                       'timestamp with time zone', null, true),
+    'coreapp.actor_roles.revoked_at must be timestamptz NULL (revoke, never delete)');
+
+select pg_temp.assert_schema(
+    pg_temp.key_columns('coreapp', 'actor_roles', 'pk_actor_roles')
+        = array['actor_id', 'role_code'],
+    'pk_actor_roles must be the composite primary key (actor_id, role_code)');
+
+select pg_temp.assert_schema(
+    pg_temp.fk_delete_rule('coreapp', 'actor_roles', 'fk_actor_roles_actor') = 'cascade',
+    'fk_actor_roles_actor must be ON DELETE CASCADE');
+
+select pg_temp.assert_schema(
+    pg_temp.has_constraint('coreapp', 'actor_roles', 'fk_actor_roles_role', 'f'),
+    'fk_actor_roles_role foreign key to coreapp.roles(code) is missing');
+
+select pg_temp.assert_schema(
+    pg_temp.fk_delete_rule('coreapp', 'actor_roles', 'fk_actor_roles_granted_by') = 'set null',
+    'fk_actor_roles_granted_by must be ON DELETE SET NULL');
+
+select pg_temp.assert_schema(
+    pg_temp.has_constraint('coreapp', 'actor_roles', 'ck_actor_roles_revoked_after_granted', 'c'),
+    'ck_actor_roles_revoked_after_granted CHECK is missing');
+
+select pg_temp.assert_schema(
+    pg_temp.has_index('coreapp', 'actor_roles', 'idx_actor_roles_role',
+                      '%where%revoked_at is null%'),
+    'index idx_actor_roles_role must exist as PARTIAL (active grants only)');
+
+-- =============================================================================
+-- 15. coreapp.claim_assignments — attore + ruolo su una pratica (DD-15)
+-- =============================================================================
+select pg_temp.assert_schema(
+    pg_temp.has_column('coreapp', 'claim_assignments', 'id', 'uuid', null, false),
+    'coreapp.claim_assignments.id must be uuid NOT NULL');
+
+select pg_temp.assert_schema(
+    pg_temp.has_column('coreapp', 'claim_assignments', 'claim_id', 'uuid', null, false)
+        and pg_temp.has_column('coreapp', 'claim_assignments', 'actor_id', 'uuid', null, false),
+    'coreapp.claim_assignments.claim_id / actor_id must be uuid NOT NULL');
+
+select pg_temp.assert_schema(
+    pg_temp.has_column('coreapp', 'claim_assignments', 'role_code',
+                       'character varying', 32, false),
+    'coreapp.claim_assignments.role_code must be varchar(32) NOT NULL');
+
+select pg_temp.assert_schema(
+    pg_temp.has_column('coreapp', 'claim_assignments', 'assigned_at',
+                       'timestamp with time zone', null, false),
+    'coreapp.claim_assignments.assigned_at must be timestamptz NOT NULL');
+
+select pg_temp.assert_schema(
+    pg_temp.has_column('coreapp', 'claim_assignments', 'assigned_by', 'uuid', null, true)
+        and pg_temp.has_column('coreapp', 'claim_assignments', 'unassigned_at',
+                               'timestamp with time zone', null, true),
+    'coreapp.claim_assignments.assigned_by / unassigned_at must be NULLABLE');
+
+select pg_temp.assert_schema(
+    pg_temp.key_columns('coreapp', 'claim_assignments', 'pk_claim_assignments') = array['id'],
+    'pk_claim_assignments must be the single-column primary key (id)');
+
+select pg_temp.assert_schema(
+    pg_temp.fk_delete_rule('coreapp', 'claim_assignments',
+                           'fk_claim_assignments_claim') = 'cascade',
+    'fk_claim_assignments_claim must be ON DELETE CASCADE');
+
+select pg_temp.assert_schema(
+    pg_temp.has_constraint('coreapp', 'claim_assignments', 'fk_claim_assignments_role', 'f')
+        and pg_temp.has_constraint('coreapp', 'claim_assignments',
+                                   'fk_claim_assignments_actor', 'f'),
+    'fk_claim_assignments_actor / fk_claim_assignments_role are missing');
+
+select pg_temp.assert_schema(
+    pg_temp.fk_delete_rule('coreapp', 'claim_assignments',
+                           'fk_claim_assignments_assigned_by') = 'set null',
+    'fk_claim_assignments_assigned_by must be ON DELETE SET NULL');
+
+select pg_temp.assert_schema(
+    pg_temp.has_constraint('coreapp', 'claim_assignments',
+                           'ck_claim_assignments_unassigned_after_assigned', 'c'),
+    'ck_claim_assignments_unassigned_after_assigned CHECK is missing');
+
+-- DD-15: DB-enforced "at most one active holder per role per claim".
+select pg_temp.assert_schema(
+    pg_temp.has_index('coreapp', 'claim_assignments', 'uk_claim_assignments_active_role',
+                      '%unique%where%unassigned_at is null%'),
+    'uk_claim_assignments_active_role must exist as PARTIAL UNIQUE '
+    '(claim_id, role_code) where unassigned_at is null (DD-15)');
+
+select pg_temp.assert_schema(
+    pg_temp.has_index('coreapp', 'claim_assignments', 'idx_claim_assignments_actor_active',
+                      '%where%unassigned_at is null%'),
+    'index idx_claim_assignments_actor_active must exist as PARTIAL ("my claims")');
+
+select pg_temp.assert_schema(
+    pg_temp.has_index('coreapp', 'claim_assignments', 'idx_claim_assignments_claim'),
+    'index idx_claim_assignments_claim (claim_id, assigned_at desc) is missing');
+
+-- =============================================================================
+-- 16. coreapp.audit_events — append-only audit trail (A5 / DD-11)
+-- =============================================================================
+select pg_temp.assert_schema(
+    pg_temp.has_column('coreapp', 'audit_events', 'id', 'uuid', null, false),
+    'coreapp.audit_events.id must be uuid NOT NULL');
+
+select pg_temp.assert_schema(
+    pg_temp.has_column('coreapp', 'audit_events', 'claim_id', 'uuid', null, true)
+        and pg_temp.has_column('coreapp', 'audit_events', 'actor_id', 'uuid', null, true),
+    'coreapp.audit_events.claim_id / actor_id must be NULLABLE (non-claim events exist)');
+
+select pg_temp.assert_schema(
+    pg_temp.has_column('coreapp', 'audit_events', 'event_type', 'character varying', 64, false),
+    'coreapp.audit_events.event_type must be varchar(64) NOT NULL');
+
+select pg_temp.assert_schema(
+    pg_temp.has_column('coreapp', 'audit_events', 'entity_type', 'character varying', 32, false),
+    'coreapp.audit_events.entity_type must be varchar(32) NOT NULL');
+
+select pg_temp.assert_schema(
+    pg_temp.has_column('coreapp', 'audit_events', 'entity_id', 'uuid', null, false),
+    'coreapp.audit_events.entity_id must be uuid NOT NULL');
+
+select pg_temp.assert_schema(
+    pg_temp.has_column('coreapp', 'audit_events', 'outcome', 'character varying', 16, false),
+    'coreapp.audit_events.outcome must be varchar(16) NOT NULL');
+
+select pg_temp.assert_schema(
+    pg_temp.has_column('coreapp', 'audit_events', 'occurred_at',
+                       'timestamp with time zone', null, false),
+    'coreapp.audit_events.occurred_at must be timestamptz NOT NULL');
+
+select pg_temp.assert_schema(
+    pg_temp.has_column('coreapp', 'audit_events', 'request_id', 'character varying', 64, true),
+    'coreapp.audit_events.request_id must be varchar(64) NULL (correlation id)');
+
+-- DD-11 (plan risk R1): details is jsonb, mapped by Hibernate with SqlTypes.JSON.
+select pg_temp.assert_schema(
+    pg_temp.has_column('coreapp', 'audit_events', 'details', 'jsonb', null, true),
+    'coreapp.audit_events.details must be jsonb NULL');
+
+select pg_temp.assert_schema(
+    pg_temp.key_columns('coreapp', 'audit_events', 'pk_audit_events') = array['id'],
+    'pk_audit_events must be the single-column primary key (id)');
+
+select pg_temp.assert_schema(
+    pg_temp.fk_delete_rule('coreapp', 'audit_events', 'fk_audit_events_claim') = 'cascade',
+    'fk_audit_events_claim must be ON DELETE CASCADE');
+
+select pg_temp.assert_schema(
+    pg_temp.fk_delete_rule('coreapp', 'audit_events', 'fk_audit_events_actor') = 'set null',
+    'fk_audit_events_actor must be ON DELETE SET NULL (the audit row survives the actor)');
+
+select pg_temp.assert_schema(
+    pg_temp.has_constraint('coreapp', 'audit_events', 'ck_audit_events_event_type_format', 'c'),
+    'ck_audit_events_event_type_format CHECK is missing (format, not enumerated values: A5)');
+
+select pg_temp.assert_schema(
+    pg_temp.has_constraint('coreapp', 'audit_events', 'ck_audit_events_outcome', 'c',
+                           '%SUCCESS%FAILURE%'),
+    'ck_audit_events_outcome must accept exactly SUCCESS / FAILURE');
+
+-- No enumerated CHECK on event_type: a new business event must not need a migration.
+select pg_temp.assert_schema(
+    not exists (
+        select 1
+          from pg_constraint con
+          join pg_class rel on rel.oid = con.conrelid
+          join pg_namespace nsp on nsp.oid = rel.relnamespace
+         where nsp.nspname = 'coreapp'
+           and rel.relname = 'audit_events'
+           and con.contype = 'c'
+           and pg_get_constraintdef(con.oid) ilike '%event_type in%'
+    ),
+    'audit_events.event_type must be validated by a regex FORMAT, never by an enumerated CHECK (A5)');
+
+select pg_temp.assert_schema(
+    pg_temp.has_index('coreapp', 'audit_events', 'idx_audit_events_claim')
+        and pg_temp.has_index('coreapp', 'audit_events', 'idx_audit_events_entity')
+        and pg_temp.has_index('coreapp', 'audit_events', 'idx_audit_events_actor')
+        and pg_temp.has_index('coreapp', 'audit_events', 'idx_audit_events_occurred_at'),
+    'the four audit_events indexes (claim, entity, actor, occurred_at) are missing');
+
+-- =============================================================================
+-- 17. coreapp.claim_status_transition — regole della macchina a stati (A3)
+-- =============================================================================
+select pg_temp.assert_schema(
+    pg_temp.has_column('coreapp', 'claim_status_transition', 'from_status',
+                       'character varying', 32, false)
+        and pg_temp.has_column('coreapp', 'claim_status_transition', 'to_status',
+                               'character varying', 32, false),
+    'coreapp.claim_status_transition.from_status / to_status must be varchar(32) NOT NULL');
+
+select pg_temp.assert_schema(
+    pg_temp.key_columns('coreapp', 'claim_status_transition', 'pk_claim_status_transition')
+        = array['from_status', 'to_status'],
+    'pk_claim_status_transition must be the composite primary key (from_status, to_status)');
+
+select pg_temp.assert_schema(
+    pg_temp.check_literals('coreapp', 'claim_status_transition', 'ck_claim_status_transition_from')
+        = array['APPRAISAL', 'APPROVED', 'ARCHIVED', 'CLOSED', 'DRAFT',
+                'INTEGRATION_REQUESTED', 'REJECTED', 'SETTLEMENT', 'SUBMITTED',
+                'UNDER_REVIEW'],
+    'ck_claim_status_transition_from must accept exactly the 10 ClaimStatus values');
+
+select pg_temp.assert_schema(
+    pg_temp.check_literals('coreapp', 'claim_status_transition', 'ck_claim_status_transition_to')
+        = array['APPRAISAL', 'APPROVED', 'ARCHIVED', 'CLOSED', 'DRAFT',
+                'INTEGRATION_REQUESTED', 'REJECTED', 'SETTLEMENT', 'SUBMITTED',
+                'UNDER_REVIEW'],
+    'ck_claim_status_transition_to must accept exactly the 10 ClaimStatus values');
+
+select pg_temp.assert_schema(
+    pg_temp.has_constraint('coreapp', 'claim_status_transition',
+                           'ck_claim_status_transition_actual_change', 'c'),
+    'ck_claim_status_transition_actual_change (from_status <> to_status) CHECK is missing');
+
+-- Seed == ClaimStatus.allowedTransitions() (set equality, decisions A3/A10).
+select pg_temp.assert_schema(
+    (select array_agg(t.from_status::text || '->' || t.to_status::text
+                      order by t.from_status::text || '->' || t.to_status::text)
+       from coreapp.claim_status_transition t)
+        = array['APPRAISAL->APPROVED', 'APPRAISAL->REJECTED', 'APPRAISAL->UNDER_REVIEW',
+                'APPROVED->SETTLEMENT', 'CLOSED->ARCHIVED', 'DRAFT->SUBMITTED',
+                'INTEGRATION_REQUESTED->UNDER_REVIEW', 'REJECTED->CLOSED',
+                'SETTLEMENT->CLOSED', 'SUBMITTED->UNDER_REVIEW',
+                'UNDER_REVIEW->APPRAISAL', 'UNDER_REVIEW->APPROVED',
+                'UNDER_REVIEW->INTEGRATION_REQUESTED', 'UNDER_REVIEW->REJECTED'],
+    'coreapp.claim_status_transition must contain exactly the 14 transitions of ClaimStatus '
+    '(APPROVED -> CLOSED is NOT allowed: liquidazione cannot be skipped, decision A10)');
+
+-- =============================================================================
+-- 18. documents.documents — versioning, key_ref e retention (A6/A7)
+-- =============================================================================
+select pg_temp.assert_schema(
+    pg_temp.has_column('documents', 'documents', 'document_key', 'uuid', null, false),
+    'documents.documents.document_key must be uuid NOT NULL (logical identity, backfilled = id)');
+
+select pg_temp.assert_schema(
+    pg_temp.has_column('documents', 'documents', 'version_number', 'integer', null, false),
+    'documents.documents.version_number must be integer NOT NULL (business version)');
+
+select pg_temp.assert_schema(
+    pg_temp.has_column('documents', 'documents', 'is_current', 'boolean', null, false),
+    'documents.documents.is_current must be boolean NOT NULL');
+
+select pg_temp.assert_schema(
+    pg_temp.has_column('documents', 'documents', 'key_ref', 'character varying', 160, true),
+    'documents.documents.key_ref must be varchar(160) NULL (opaque KMS reference)');
+
+select pg_temp.assert_schema(
+    pg_temp.has_column('documents', 'documents', 'retention_until', 'date', null, true),
+    'documents.documents.retention_until must be date NULL');
+
+select pg_temp.assert_schema(
+    pg_temp.has_column('documents', 'documents', 'legal_hold', 'boolean', null, false),
+    'documents.documents.legal_hold must be boolean NOT NULL');
+
+select pg_temp.assert_schema(
+    pg_temp.has_column('documents', 'documents', 'supersedes_id', 'uuid', null, true),
+    'documents.documents.supersedes_id must be uuid NULL (previous version)');
+
+select pg_temp.assert_schema(
+    pg_temp.has_constraint('documents', 'documents', 'ck_documents_version_number_positive', 'c'),
+    'ck_documents_version_number_positive (version_number >= 1) CHECK is missing');
+
+select pg_temp.assert_schema(
+    pg_temp.has_constraint('documents', 'documents', 'uk_documents_document_key_version', 'u'),
+    'uk_documents_document_key_version unique (document_key, version_number) is missing');
+
+select pg_temp.assert_schema(
+    pg_temp.has_constraint('documents', 'documents', 'ck_documents_key_ref_format', 'c'),
+    'ck_documents_key_ref_format CHECK is missing');
+
+select pg_temp.assert_schema(
+    pg_temp.has_constraint('documents', 'documents', 'ck_documents_retention_after_upload', 'c'),
+    'ck_documents_retention_after_upload (retention_until >= upload date) CHECK is missing');
+
+select pg_temp.assert_schema(
+    pg_temp.fk_delete_rule('documents', 'documents', 'fk_documents_supersedes') = 'set null',
+    'fk_documents_supersedes must be ON DELETE SET NULL');
+
+select pg_temp.assert_schema(
+    pg_temp.has_constraint('documents', 'documents', 'uk_documents_supersedes', 'u'),
+    'uk_documents_supersedes unique (supersedes_id) is missing (linear chain, no forks)');
+
+select pg_temp.assert_schema(
+    pg_temp.has_constraint('documents', 'documents', 'ck_documents_supersedes_not_self', 'c'),
+    'ck_documents_supersedes_not_self CHECK is missing');
+
+-- DD-12: exactly one live current version per document_key.
+select pg_temp.assert_schema(
+    pg_temp.has_index('documents', 'documents', 'uk_documents_current_version',
+                      '%unique%where%is_current%'),
+    'uk_documents_current_version must exist as PARTIAL UNIQUE (document_key) '
+    'where is_current and deleted_at is null (DD-12)');
+
+select pg_temp.assert_schema(
+    pg_temp.has_index('documents', 'documents', 'idx_documents_key_versions', '%version_number desc%'),
+    'index idx_documents_key_versions (document_key, version_number desc) is missing');
+
+select pg_temp.assert_schema(
+    pg_temp.has_index('documents', 'documents', 'idx_documents_retention_due',
+                      '%where%retention_until is not null%'),
+    'index idx_documents_retention_due must exist as PARTIAL (purge job selector)');
+
+-- =============================================================================
+-- 19. Flyway bookkeeping — only when the schemas were migrated by Flyway
 --    (skipped when the raw V1 scripts were applied with psql: no history table).
 -- =============================================================================
 do $$
@@ -700,6 +1253,12 @@ begin
             raise exception
                 'SCHEMA CONTRACT VIOLATION: coreapp migration V1 is not recorded as successful';
         end if;
+        if not exists (select 1
+                         from coreapp.flyway_schema_history
+                        where version = '2' and type = 'SQL' and success) then
+            raise exception
+                'SCHEMA CONTRACT VIOLATION: coreapp migration V2 is not recorded as successful';
+        end if;
     end if;
 
     if to_regclass('documents.flyway_schema_history') is not null then
@@ -713,15 +1272,21 @@ begin
             raise exception
                 'SCHEMA CONTRACT VIOLATION: documents migration V1 is not recorded as successful';
         end if;
+        if not exists (select 1
+                         from documents.flyway_schema_history
+                        where version = '2' and type = 'SQL' and success) then
+            raise exception
+                'SCHEMA CONTRACT VIOLATION: documents migration V2 is not recorded as successful';
+        end if;
     end if;
 end;
 $$;
 
 -- =============================================================================
--- 10. Summary row — only printed when every assertion above passed.
+-- 20. Summary row — only printed when every assertion above passed.
 -- =============================================================================
 select 'SCHEMA CONTRACT OK' as result,
-       92 as assertions_passed,
-       '6 tables · 2 schemas · 29 named constraints (6 PK, 4 UK, 4 FK, 15 CHECK) '
-       '· 9 indexes · 7 ClaimStatus values' as checked,
+       200 as assertions_passed,
+       '12 tables · 2 schemas · 77 named constraints (12 PK, 7 UK, 17 FK, 41 CHECK) '
+       '· 24 indexes · 10 ClaimStatus values · 14 transition rules' as checked,
        'coreapp + documents match docs/db/README.md §4' as source_of_truth;

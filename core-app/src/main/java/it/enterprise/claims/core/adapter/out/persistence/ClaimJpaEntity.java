@@ -17,7 +17,8 @@ import java.util.Objects;
 import java.util.UUID;
 
 /**
- * JPA mapping of {@code coreapp.claims} (migration {@code V1__init_claims.sql}).
+ * JPA mapping of {@code coreapp.claims} (migrations {@code V1__init_claims.sql} and {@code
+ * V2__claim_workflow_actors_audit.sql}).
  *
  * <p>{@code status} is stored as {@link EnumType#STRING} and validated by the {@code
  * ck_claims_status} CHECK constraint; {@code version} is the optimistic-locking counter.
@@ -58,6 +59,17 @@ public class ClaimJpaEntity {
 
   @Column(name = "updated_at", nullable = false)
   private OffsetDateTime updatedAt;
+
+  /*
+   * Reporting timestamps added by V2__claim_workflow_actors_audit.sql. They are maintained by the
+   * application on the transition into CLOSED / ARCHIVED and cross-checked by
+   * ck_claims_closed_at_requires_closed_status / ck_claims_archived_at_requires_archived_status.
+   */
+  @Column(name = "closed_at")
+  private OffsetDateTime closedAt;
+
+  @Column(name = "archived_at")
+  private OffsetDateTime archivedAt;
 
   @Version
   @Column(name = "version", nullable = false)
@@ -172,6 +184,22 @@ public class ClaimJpaEntity {
 
   public void setUpdatedAt(OffsetDateTime updatedAt) {
     this.updatedAt = updatedAt;
+  }
+
+  public OffsetDateTime getClosedAt() {
+    return closedAt;
+  }
+
+  public void setClosedAt(OffsetDateTime closedAt) {
+    this.closedAt = closedAt;
+  }
+
+  public OffsetDateTime getArchivedAt() {
+    return archivedAt;
+  }
+
+  public void setArchivedAt(OffsetDateTime archivedAt) {
+    this.archivedAt = archivedAt;
   }
 
   public Long getVersion() {

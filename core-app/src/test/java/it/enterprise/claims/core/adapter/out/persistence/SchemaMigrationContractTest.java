@@ -11,6 +11,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.UncheckedIOException;
 import java.lang.reflect.Field;
+import java.lang.reflect.Modifier;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -23,27 +24,45 @@ import java.util.Map;
 import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import org.hibernate.annotations.Immutable;
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.type.SqlTypes;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /**
- * Contract between the Flyway migration and the JPA mapping of the {@code coreapp} schema.
+ * Contract between the Flyway migrations and the JPA mapping of the {@code coreapp} schema.
  *
  * <p>The schema is owned by Flyway and Hibernate only validates it at startup ({@code
  * ddl-auto=validate}), so a column mapped by an entity but missing from the migration — or a {@link
  * ClaimStatus} value missing from the CHECK constraints — becomes a <em>runtime</em> failure that
  * no unit test would catch. This test turns that drift into a build failure.
  *
- * <p>It needs no database: the migration is read from the test classpath, so it runs in the default
- * {@code mvn verify} and in CI. It enforces the rules of {@code docs/db/README.md}: §4 (the
- * entities mirror the migrated columns one-to-one) and §7.5 (a new {@link ClaimStatus} value
- * requires both the enum and a migration).
+ * <p>It needs no database: every migration of the module is read from the test classpath (V1 plus
+ * every incremental {@code V<n>}), so it runs in the default {@code mvn verify} and in CI. Columns
+ * added by an incremental migration ({@code alter table … add column if not exists …}) are merged
+ * with the ones declared in the original {@code create table}, and the <strong>last</strong>
+ * definition of a constraint wins — that is what a migrated database ends up with.
+ *
+ * <p>It enforces the rules of {@code docs/db/README.md}: §4 (the entities mirror the migrated
+ * columns one-to-one), §7.5 (a new {@link ClaimStatus} value requires both the enum and a
+ * migration) and the decisions DD-6 (soft delete), DD-7 (no native enum), DD-11 (append-only audit)
+ * and DD-15 (one active assignment per role).
  */
 class SchemaMigrationContractTest {
 
-  private static final String MIGRATION = "db/migration/V1__init_claims.sql";
+  /** Versioned migrations of core-app, in Flyway order: V1 creates, V2 evolves. */
+  private static final List<String> MIGRATIONS =
+      List.of(
+          "db/migration/V1__init_claims.sql", "db/migration/V2__claim_workflow_actors_audit.sql");
+
   private static final Pattern QUOTED_VALUE = Pattern.compile("'([^']+)'");
+
+  /** {@code alter table <schema>.<table> add column if not exists <column> <definition>}. */
+  private static final Pattern ADDED_COLUMN =
+      Pattern.compile(
+          "alter table\\s+(\\w+)\\.(\\w+)\\s+add column if not exists\\s+(\\w+)\\s+([^;]+);");
 
   /** One entry per table of the {@code coreapp} schema: the entity is the source of truth. */
   private static final List<Class<?>> ENTITIES =
@@ -52,23 +71,26 @@ class SchemaMigrationContractTest {
           PolicyJpaEntity.class,
           CustomerJpaEntity.class,
           ClaimStatusHistoryJpaEntity.class,
-          ClaimDocumentJpaEntity.class);
+          ClaimDocumentJpaEntity.class,
+          RoleJpaEntity.class,
+          ActorJpaEntity.class,
+          ActorRoleJpaEntity.class,
+          ClaimAssignmentJpaEntity.class,
+          AuditEventJpaEntity.class);
 
   private static String ddl;
 
   @BeforeAll
-  static void loadMigration() {
-    try (InputStream stream =
-        SchemaMigrationContractTest.class.getClassLoader().getResourceAsStream(MIGRATION)) {
-      assertThat(stream).as("migration %s on the test classpath", MIGRATION).isNotNull();
-      ddl = new String(stream.readAllBytes(), StandardCharsets.UTF_8).toLowerCase(Locale.ROOT);
-    } catch (IOException cause) {
-      throw new UncheckedIOException(cause);
+  static void loadMigrations() {
+    StringBuilder merged = new StringBuilder();
+    for (String migration : MIGRATIONS) {
+      merged.append(classpathText(migration)).append('\n');
     }
+    ddl = merged.toString().toLowerCase(Locale.ROOT);
   }
 
   @Test
-  @DisplayName("every mapped table is created by the migration, in the declared schema")
+  @DisplayName("every mapped table is created by the migrations, in the declared schema")
   void everyMappedTableIsMigrated() {
     for (Class<?> entity : ENTITIES) {
       Table table = tableOf(entity);
@@ -82,7 +104,7 @@ class SchemaMigrationContractTest {
   }
 
   @Test
-  @DisplayName("every @Column of every entity exists in the migration, with the declared type")
+  @DisplayName("every @Column of every entity exists in the migrations, with the declared type")
   void everyMappedColumnIsMigrated() {
     for (Class<?> entity : ENTITIES) {
       Table table = tableOf(entity);
@@ -107,13 +129,12 @@ class SchemaMigrationContractTest {
   }
 
   @Test
-  @DisplayName("every unique constraint declared on the entities exists in the migration")
+  @DisplayName("every unique constraint declared on the entities exists in the migrations")
   void everyUniqueConstraintIsMigrated() {
     for (Class<?> entity : ENTITIES) {
       Table table = tableOf(entity);
-      String body = tableBody(table);
       for (UniqueConstraint unique : table.uniqueConstraints()) {
-        assertThat(body)
+        assertThat(ddl)
             .as("unique constraint %s of %s", unique.name(), entity.getSimpleName())
             .contains("constraint " + unique.name());
       }
@@ -129,15 +150,17 @@ class SchemaMigrationContractTest {
             .sorted(Comparator.naturalOrder())
             .toList();
 
-    assertThat(quotedValuesOf("ck_claims_status"))
-        .as("ck_claims_status must mirror ClaimStatus (decision DD-7)")
-        .containsExactlyElementsOf(expected);
-    assertThat(quotedValuesOf("ck_claim_status_history_from_status"))
-        .as("ck_claim_status_history_from_status must mirror ClaimStatus")
-        .containsExactlyElementsOf(expected);
-    assertThat(quotedValuesOf("ck_claim_status_history_to_status"))
-        .as("ck_claim_status_history_to_status must mirror ClaimStatus")
-        .containsExactlyElementsOf(expected);
+    for (String constraint :
+        List.of(
+            "ck_claims_status",
+            "ck_claim_status_history_from_status",
+            "ck_claim_status_history_to_status",
+            "ck_claim_status_transition_from",
+            "ck_claim_status_transition_to")) {
+      assertThat(quotedValuesOf(constraint))
+          .as("%s must mirror ClaimStatus (decision DD-7)", constraint)
+          .containsExactlyElementsOf(expected);
+    }
   }
 
   @Test
@@ -150,6 +173,71 @@ class SchemaMigrationContractTest {
     assertThat(typeOf(columnDefinitions(tableOf(ClaimJpaEntity.class)), "version"))
         .as("claims.version maps a Long, so the column must be bigint")
         .isEqualTo("bigint");
+
+    assertThat(typeOf(columnDefinitions(tableOf(ActorJpaEntity.class)), "version"))
+        .as("actors.version is the @Version counter of the actor aggregate")
+        .isEqualTo("bigint");
+    assertThat(columnDefinitions(tableOf(ActorJpaEntity.class)).get("version"))
+        .as("actors.version must be NOT NULL")
+        .contains("not null");
+  }
+
+  @Test
+  @DisplayName("actors soft delete keeps the partial indexes and the nullable deleted_at")
+  void actorSoftDeleteIsMigrated() {
+    assertThat(columnDefinitions(tableOf(ActorJpaEntity.class)).get("deleted_at"))
+        .as("a soft-deleted actor must stay readable/auditable, so the column is nullable (DD-6)")
+        .doesNotContain("not null");
+    assertThat(ddl)
+        .as("the live-actor lookup must be served by a partial index")
+        .containsPattern("idx_actors_type_enabled(\\s|.)*?where deleted_at is null");
+  }
+
+  @Test
+  @DisplayName(
+      "at most one active assignment per (claim, role) is enforced by a partial unique index")
+  void activeAssignmentIsUniqueInTheDatabase() {
+    assertThat(ddl)
+        .as("decision DD-15: the invariant must be enforced by PostgreSQL, not by the service")
+        .containsPattern(
+            "create unique index if not exists uk_claim_assignments_active_role"
+                + "(\\s|.)*?where unassigned_at is null");
+  }
+
+  @Test
+  @DisplayName("audit_events is append-only in the mapping and stores details as jsonb")
+  void auditEventsIsAppendOnly() {
+    assertThat(AuditEventJpaEntity.class.isAnnotationPresent(Immutable.class))
+        .as("decision DD-11: @Immutable prevents Hibernate from ever updating an audit row")
+        .isTrue();
+
+    for (Field field : AuditEventJpaEntity.class.getDeclaredFields()) {
+      if (field.isSynthetic() || Modifier.isStatic(field.getModifiers())) {
+        continue;
+      }
+      Column column = field.getAnnotation(Column.class);
+      assertThat(column).as("audit field %s must be a mapped column", field.getName()).isNotNull();
+      assertThat(column.updatable())
+          .as("audit column %s must never be updatable (append-only)", column.name())
+          .isFalse();
+    }
+
+    assertThat(AuditEventJpaEntity.class.getDeclaredFields())
+        .as("details must be mapped as JSON so Hibernate writes jsonb")
+        .anySatisfy(
+            field -> {
+              Column column = field.getAnnotation(Column.class);
+              if (column != null && "details".equals(column.name())) {
+                assertThat(field.getAnnotation(JdbcTypeCode.class))
+                    .as("details needs @JdbcTypeCode(SqlTypes.JSON)")
+                    .isNotNull()
+                    .extracting(JdbcTypeCode::value)
+                    .isEqualTo(SqlTypes.JSON);
+              }
+            });
+    assertThat(typeOf(columnDefinitions(tableOf(AuditEventJpaEntity.class)), "details"))
+        .as("coreapp.audit_events.details must be jsonb")
+        .isEqualTo("jsonb");
   }
 
   @Test
@@ -192,8 +280,13 @@ class SchemaMigrationContractTest {
    * @return the raw body of the {@code create table} statement, empty when the table is missing
    */
   private static String tableBody(Table table) {
-    String marker = "create table " + table.schema() + "." + table.name();
-    int start = ddl.indexOf(marker);
+    int start = -1;
+    for (String prefix : List.of("create table if not exists ", "create table ")) {
+      start = ddl.indexOf(prefix + table.schema() + "." + table.name());
+      if (start >= 0) {
+        break;
+      }
+    }
     if (start < 0) {
       return "";
     }
@@ -214,6 +307,10 @@ class SchemaMigrationContractTest {
   }
 
   /**
+   * Columns of a table as they end up after <em>all</em> migrations: the {@code create table}
+   * definition plus every {@code alter table … add column if not exists …} of the incremental
+   * migrations (V2 onwards).
+   *
    * @param table the mapped table
    * @return column name to raw column definition (type, nullability, constraints)
    */
@@ -225,6 +322,14 @@ class SchemaMigrationContractTest {
       }
       String[] tokens = segment.split("\\s+");
       definitions.put(tokens[0], segment);
+    }
+
+    Matcher added = ADDED_COLUMN.matcher(ddl);
+    while (added.find()) {
+      if (added.group(1).equals(table.schema()) && added.group(2).equals(table.name())) {
+        String column = added.group(3);
+        definitions.put(column, column + " " + added.group(4).trim());
+      }
     }
     return definitions;
   }
@@ -294,7 +399,9 @@ class SchemaMigrationContractTest {
     Map<String, Integer> lengths = new LinkedHashMap<>();
     for (Field field : entity.getDeclaredFields()) {
       Column column = field.getAnnotation(Column.class);
-      if (column != null && field.getType() == String.class && column.length() > 0) {
+      // A JSON column is not a varchar: @Column(length) keeps its default there and is meaningless.
+      boolean jsonColumn = field.getAnnotation(JdbcTypeCode.class) != null;
+      if (column != null && field.getType() == String.class && column.length() > 0 && !jsonColumn) {
         lengths.put(column.name().toLowerCase(Locale.ROOT), column.length());
       }
       if (field.isAnnotationPresent(EmbeddedId.class)) {
@@ -305,20 +412,24 @@ class SchemaMigrationContractTest {
   }
 
   /**
-   * @param constraintName a named constraint of the migration
+   * Quoted values of the <strong>last</strong> definition of a named constraint: an incremental
+   * migration that drops and re-adds a CHECK (widening {@code ck_claims_status} from 7 to 10 values
+   * in V2) is what the migrated database actually enforces.
+   *
+   * @param constraintName a named constraint of the migrations
    * @return the quoted values of that constraint, sorted, uppercase
    */
   private static List<String> quotedValuesOf(String constraintName) {
-    int start = ddl.indexOf("constraint " + constraintName);
+    int start = ddl.lastIndexOf("constraint " + constraintName + " ");
     assertThat(start)
-        .as("constraint %s declared in %s", constraintName, MIGRATION)
+        .as("constraint %s declared in one of %s", constraintName, MIGRATIONS)
         .isGreaterThanOrEqualTo(0);
 
     String tail = ddl.substring(start);
     int end = tail.length();
     int nextConstraint = tail.indexOf("constraint ", 1);
-    int endOfTable = tail.indexOf("\n);");
-    for (int candidate : new int[] {nextConstraint, endOfTable}) {
+    int endOfStatement = tail.indexOf(';');
+    for (int candidate : new int[] {nextConstraint, endOfStatement}) {
       if (candidate > 0) {
         end = Math.min(end, candidate);
       }
