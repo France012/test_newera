@@ -147,8 +147,7 @@ public class ClaimController {
   @GetMapping("/{claimId}/documents")
   @Operation(summary = "List the document links of a claim (attached by default)")
   public List<ClaimDocumentLinkResponse> documents(
-      @PathVariable UUID claimId,
-      @RequestParam(defaultValue = "false") boolean includeUnlinked) {
+      @PathVariable UUID claimId, @RequestParam(defaultValue = "false") boolean includeUnlinked) {
     return claimService.findDocumentLinks(claimId, includeUnlinked);
   }
 

@@ -13,7 +13,7 @@ openapi: 3.0.3
 
 info:
   title: claims-platform — document-service API
-  version: 0.1.0
+  version: 0.2.0
   description: |
     Document metadata and content of the `document-service` (port 8181).
 
@@ -32,6 +32,8 @@ security: []
 tags:
   - name: Documents
     description: Upload, read, download and soft delete
+  - name: Versions and retention
+    description: Version chain of a document key and its retention policy
   - name: Actuator
 
 paths:
@@ -102,6 +104,15 @@ paths:
           schema:
             type: string
             format: uuid
+        - name: currentOnly
+          in: query
+          required: false
+          description: |
+            When `true` (default) only the live current version of each document key is returned;
+            `false` returns every non-deleted version of the claim.
+          schema:
+            type: boolean
+            default: true
         - name: page
           in: query
           required: false
@@ -149,12 +160,16 @@ paths:
       tags: [Documents]
       operationId: deleteDocument
       summary: Soft delete a document
-      description: Sets `deleted_at`; the row stays for audit and disappears from reads.
+      description: |
+        Sets `deleted_at`; the row stays for audit and disappears from reads. When the document is
+        on legal hold the call returns `409` (`title: "Document on legal hold"`).
       responses:
         '204':
           description: Deleted (idempotent from the client point of view).
         '404':
           $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
 
   /api/v1/documents/{documentId}/content:
     parameters:
@@ -189,6 +204,114 @@ paths:
             application/problem+json:
               schema:
                 $ref: '#/components/schemas/Problem'
+
+  /api/v1/documents/{documentId}/versions:
+    parameters:
+      - $ref: '#/components/parameters/DocumentId'
+    get:
+      tags: [Versions and retention]
+      operationId: listDocumentVersions
+      summary: List the version chain of a document
+      description: |
+        Returns every version sharing the `documentKey` of the addressed document, newest first,
+        including the soft-deleted ones (`deletedAt` set) so the chain stays auditable. Served by
+        the index on `(document_key, version_number desc)`.
+      responses:
+        '200':
+          description: The version chain, newest first.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/DocumentVersionResponse'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    post:
+      tags: [Versions and retention]
+      operationId: uploadDocumentVersion
+      summary: Upload a new version of a document
+      description: |
+        `multipart/form-data` with exactly one file part named `file`; `documentType` is an
+        optional query override. The new row inherits the `documentKey` of the addressed document
+        and gets `versionNumber = max + 1`; the previous version is flagged `isCurrent = false`.
+        Two concurrent uploads that compute the same next version collide on the partial unique
+        index `uq_documents_current_version` and the loser gets `409`
+        (`title: "Document version conflict"`).
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file:
+                  type: string
+                  format: binary
+      parameters:
+        - name: documentType
+          in: query
+          required: false
+          description: Classification of the new version; inherits the previous one when omitted.
+          schema:
+            type: string
+      responses:
+        '201':
+          description: Version stored.
+          headers:
+            Location:
+              description: Absolute URI of the metadata of the new version.
+              schema:
+                type: string
+                format: uri
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DocumentResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '413':
+          description: Upload exceeds the 20MB limit.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+
+  /api/v1/documents/{documentId}/retention:
+    parameters:
+      - $ref: '#/components/parameters/DocumentId'
+    patch:
+      tags: [Versions and retention]
+      operationId: updateDocumentRetention
+      summary: Set the retention date and/or the legal hold of a document
+      description: |
+        `retentionUntil` and `legalHold` are both optional; an omitted (`null`) field is left
+        untouched. While `legalHold` is `true` the document cannot be deleted: `DELETE` returns
+        `409` with `title: "Document on legal hold"`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DocumentRetentionUpdateRequest'
+      responses:
+        '200':
+          description: The updated metadata.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DocumentResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
 
   /actuator/health:
     get:
@@ -232,24 +355,47 @@ components:
         application/problem+json:
           schema:
             $ref: '#/components/schemas/Problem'
+    Conflict:
+      description: |
+        The request conflicts with the current state: `Document on legal hold` (delete),
+        `Document version conflict` (concurrent version upload) or `Invalid retention policy`.
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
 
   schemas:
     DocumentResponse:
       type: object
+      description: |
+        Metadata of one version of a document. `storageKey` is deliberately **not** exposed (D9):
+        how and where the bytes are stored is an internal detail and the content is addressed
+        through `GET /api/v1/documents/{documentId}/content`. `keyRef` *is* exposed because it is
+        an opaque, non-secret alias/version of the encryption key.
       required:
         - id
+        - documentKey
         - claimId
         - fileName
         - contentType
         - sizeBytes
         - documentType
         - checksumSha256
+        - versionNumber
+        - isCurrent
+        - legalHold
         - uploadedAt
         - version
       properties:
         id:
           type: string
           format: uuid
+        documentKey:
+          type: string
+          format: uuid
+          description: |
+            Logical identity shared by every version of the same document. Equal to `id` for the
+            first version.
         claimId:
           type: string
           format: uuid
@@ -271,6 +417,30 @@ components:
           type: string
           description: Lowercase hex SHA-256 of the stored bytes (64 chars).
           pattern: '^[0-9a-f]{64}$'
+        versionNumber:
+          type: integer
+          format: int32
+          minimum: 1
+          description: |
+            Business version inside the `documentKey` chain (`1..N`). **Not** the optimistic-lock
+            counter, which is the trailing `version` property.
+        isCurrent:
+          type: boolean
+          description: |
+            `true` for the live version of the document key; exactly one current version per key
+            (partial unique index `uq_documents_current_version`).
+        keyRef:
+          type: string
+          nullable: true
+          description: Opaque, non-secret KMS key alias/version used to encrypt the content.
+        retentionUntil:
+          type: string
+          format: date
+          nullable: true
+          description: End of the mandatory retention period; `null` when no policy is set.
+        legalHold:
+          type: boolean
+          description: When `true` the document cannot be deleted, whatever the retention says.
         uploadedAt:
           type: string
           format: date-time
@@ -278,6 +448,7 @@ components:
           type: integer
           format: int32
           minimum: 1
+          description: Optimistic-locking counter managed by Hibernate.
 
     DocumentPageResponse:
       type: object
@@ -320,3 +491,60 @@ components:
         instance:
           type: string
           format: uri
+
+    DocumentVersionResponse:
+      type: object
+      description: Compact summary of one entry of a version chain.
+      required:
+        - id
+        - documentKey
+        - versionNumber
+        - isCurrent
+        - fileName
+        - documentType
+        - sizeBytes
+        - checksumSha256
+        - uploadedAt
+      properties:
+        id:
+          type: string
+          format: uuid
+        documentKey:
+          type: string
+          format: uuid
+        versionNumber:
+          type: integer
+          format: int32
+          minimum: 1
+        isCurrent:
+          type: boolean
+        fileName:
+          type: string
+        documentType:
+          type: string
+        sizeBytes:
+          type: integer
+          format: int64
+        checksumSha256:
+          type: string
+          pattern: '^[0-9a-f]{64}$'
+        uploadedAt:
+          type: string
+          format: date-time
+        deletedAt:
+          type: string
+          format: date-time
+          nullable: true
+          description: Set when the version was soft deleted; the entry stays in the chain.
+
+    DocumentRetentionUpdateRequest:
+      type: object
+      description: Both fields are optional; `null` means "leave untouched".
+      properties:
+        retentionUntil:
+          type: string
+          format: date
+          nullable: true
+        legalHold:
+          type: boolean
+          nullable: true

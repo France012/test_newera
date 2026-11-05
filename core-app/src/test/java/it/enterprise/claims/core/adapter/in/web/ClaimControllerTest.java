@@ -174,6 +174,8 @@ class ClaimControllerTest {
         LocalDate.of(2025, 2, 1),
         OPENED_AT,
         OPENED_AT,
-        List.of());
+        List.of(),
+        null,
+        null);
   }
 }

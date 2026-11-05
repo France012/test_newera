@@ -216,8 +216,7 @@ class ClaimServiceTest {
         .hasMessageContaining("ARCHIVED -> SUBMITTED");
 
     verify(claimRepository, never()).updateStatus(any(), any(), any(), any());
-    verify(auditRecorder, never())
-        .record(any(), any(), any(), any(), any(), anyMap());
+    verify(auditRecorder, never()).record(any(), any(), any(), any(), any(), anyMap());
   }
 
   @Test
@@ -244,8 +243,7 @@ class ClaimServiceTest {
     assertThatThrownBy(
             () ->
                 claimService.changeStatus(
-                    CLAIM_ID,
-                    new ClaimStatusUpdateRequest(ClaimStatus.APPROVED, null, ACTOR_ID)))
+                    CLAIM_ID, new ClaimStatusUpdateRequest(ClaimStatus.APPROVED, null, ACTOR_ID)))
         .isInstanceOf(ActorNotFoundException.class);
     verify(claimRepository, never()).updateStatus(any(), any(), any(), any());
   }

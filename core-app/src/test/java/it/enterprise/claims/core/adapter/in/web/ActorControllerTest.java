@@ -114,7 +114,8 @@ class ActorControllerTest {
 
     String body =
         objectMapper.writeValueAsString(
-            new ActorCreateRequest(SUBJECT, "Mario Rossi", null, ActorType.INTERNAL, Set.of("NOPE")));
+            new ActorCreateRequest(
+                SUBJECT, "Mario Rossi", null, ActorType.INTERNAL, Set.of("NOPE")));
 
     mockMvc
         .perform(post("/api/v1/actors").contentType(MediaType.APPLICATION_JSON).content(body))

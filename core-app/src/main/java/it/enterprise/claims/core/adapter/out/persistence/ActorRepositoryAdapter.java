@@ -115,7 +115,8 @@ public class ActorRepositoryAdapter implements ActorRepositoryPort {
         .orElseThrow(() -> new ActorNotFoundException(actorId));
 
     Map<String, ActorRoleJpaEntity> existing = new HashMap<>();
-    for (ActorRoleJpaEntity grant : actorRoleJpaRepository.findByIdActorIdOrderByIdRoleCodeAsc(actorId)) {
+    for (ActorRoleJpaEntity grant :
+        actorRoleJpaRepository.findByIdActorIdOrderByIdRoleCodeAsc(actorId)) {
       existing.put(grant.getId().getRoleCode(), grant);
     }
 

@@ -53,8 +53,7 @@ class ActorServiceTest {
 
   @BeforeEach
   void setUp() {
-    actorService =
-        new ActorService(actorRepository, roleRepository, auditRecorder, FIXED_CLOCK);
+    actorService = new ActorService(actorRepository, roleRepository, auditRecorder, FIXED_CLOCK);
   }
 
   @Test
@@ -68,11 +67,7 @@ class ActorServiceTest {
     ActorResponse response =
         actorService.create(
             new ActorCreateRequest(
-                SUBJECT,
-                "Mario Rossi",
-                SUBJECT,
-                ActorType.INTERNAL,
-                Set.of("CLAIMS_OFFICER")));
+                SUBJECT, "Mario Rossi", SUBJECT, ActorType.INTERNAL, Set.of("CLAIMS_OFFICER")));
 
     assertThat(response.subjectRef()).isEqualTo(SUBJECT);
     assertThat(response.roleCodes()).containsExactly("CLAIMS_OFFICER");
@@ -131,8 +126,7 @@ class ActorServiceTest {
   void updateRejectsUnknownActor() {
     when(actorRepository.findById(ACTOR_ID)).thenReturn(Optional.empty());
 
-    assertThatThrownBy(
-            () -> actorService.update(ACTOR_ID, new ActorUpdateRequest("x", null, null)))
+    assertThatThrownBy(() -> actorService.update(ACTOR_ID, new ActorUpdateRequest("x", null, null)))
         .isInstanceOf(ActorNotFoundException.class);
   }
 
@@ -149,7 +143,12 @@ class ActorServiceTest {
 
     assertThat(response.roleCodes()).containsExactly("APPRAISER");
     verify(auditRecorder)
-        .record(eq(AuditEventType.ACTOR_ROLES_CHANGED), eq("ACTOR"), eq(ACTOR_ID), any(), any(),
+        .record(
+            eq(AuditEventType.ACTOR_ROLES_CHANGED),
+            eq("ACTOR"),
+            eq(ACTOR_ID),
+            any(),
+            any(),
             anyMap());
   }
 

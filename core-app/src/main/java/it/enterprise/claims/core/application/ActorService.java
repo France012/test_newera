@@ -172,8 +172,7 @@ public class ActorService {
   @Transactional(readOnly = true)
   public ActorPageResponse findAll(
       String roleCode, ActorType actorType, Boolean enabled, Pageable pageable) {
-    return ActorPageResponse.from(
-        actorRepository.findPage(roleCode, actorType, enabled, pageable));
+    return ActorPageResponse.from(actorRepository.findPage(roleCode, actorType, enabled, pageable));
   }
 
   private Actor load(UUID actorId) {

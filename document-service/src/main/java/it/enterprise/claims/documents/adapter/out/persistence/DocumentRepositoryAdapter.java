@@ -85,8 +85,7 @@ public class DocumentRepositoryAdapter implements DocumentRepositoryPort {
   public Page<Document> findByClaimId(UUID claimId, boolean currentOnly, Pageable pageable) {
     Page<DocumentJpaEntity> page =
         currentOnly
-            ? documentJpaRepository.findByClaimIdAndCurrentTrueAndDeletedAtIsNull(
-                claimId, pageable)
+            ? documentJpaRepository.findByClaimIdAndCurrentTrueAndDeletedAtIsNull(claimId, pageable)
             : documentJpaRepository.findByClaimIdAndDeletedAtIsNull(claimId, pageable);
     return page.map(DocumentRepositoryAdapter::toDomain);
   }

@@ -93,7 +93,12 @@ class ClaimAssignmentServiceTest {
     assertThat(response.actorDisplayName()).isEqualTo("Mario Rossi");
     assertThat(response.unassignedAt()).isNull();
     verify(auditRecorder)
-        .record(eq(AuditEventType.CLAIM_ASSIGNED), eq("CLAIM"), eq(CLAIM_ID), eq(CLAIM_ID), any(),
+        .record(
+            eq(AuditEventType.CLAIM_ASSIGNED),
+            eq("CLAIM"),
+            eq(CLAIM_ID),
+            eq(CLAIM_ID),
+            any(),
             anyMap());
   }
 
@@ -162,7 +167,12 @@ class ClaimAssignmentServiceTest {
     claimAssignmentService.unassign(CLAIM_ID, "CLAIMS_OFFICER");
 
     verify(auditRecorder)
-        .record(eq(AuditEventType.CLAIM_UNASSIGNED), eq("CLAIM"), eq(CLAIM_ID), eq(CLAIM_ID), any(),
+        .record(
+            eq(AuditEventType.CLAIM_UNASSIGNED),
+            eq("CLAIM"),
+            eq(CLAIM_ID),
+            eq(CLAIM_ID),
+            any(),
             anyMap());
   }
 

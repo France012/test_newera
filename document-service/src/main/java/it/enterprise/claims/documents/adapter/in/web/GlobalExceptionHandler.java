@@ -120,8 +120,7 @@ public class GlobalExceptionHandler {
    * @return 400 problem
    */
   @ExceptionHandler(RetentionViolationException.class)
-  public ProblemDetail handleRetention(
-      RetentionViolationException ex, HttpServletRequest request) {
+  public ProblemDetail handleRetention(RetentionViolationException ex, HttpServletRequest request) {
     return problem(HttpStatus.BAD_REQUEST, "Invalid retention policy", ex.getMessage(), request);
   }
 

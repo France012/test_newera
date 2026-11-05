@@ -94,9 +94,12 @@ public class ClaimAssignmentPersistenceAdapter implements ClaimAssignmentPort {
   }
 
   private Map<UUID, String> displayNames(List<ClaimAssignmentJpaEntity> rows) {
-    List<UUID> actorIds = rows.stream().map(ClaimAssignmentJpaEntity::getActorId).distinct().toList();
+    List<UUID> actorIds =
+        rows.stream().map(ClaimAssignmentJpaEntity::getActorId).distinct().toList();
     Map<UUID, String> names = new LinkedHashMap<>();
-    actorJpaRepository.findAllById(actorIds).forEach(actor -> names.put(actor.getId(), actor.getDisplayName()));
+    actorJpaRepository
+        .findAllById(actorIds)
+        .forEach(actor -> names.put(actor.getId(), actor.getDisplayName()));
     return names;
   }
 

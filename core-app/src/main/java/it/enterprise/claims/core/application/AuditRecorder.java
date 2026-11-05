@@ -14,8 +14,8 @@ import org.springframework.stereotype.Component;
 /**
  * Writes the audit trail (decision A5).
  *
- * <p>One event per fact, appended in the same transaction as the fact itself (no async, no outbox in
- * phase 1): if the business write rolls back, the audit row rolls back with it, so the trail can
+ * <p>One event per fact, appended in the same transaction as the fact itself (no async, no outbox
+ * in phase 1): if the business write rolls back, the audit row rolls back with it, so the trail can
  * never describe something that did not happen.
  *
  * <p>The correlation id is read from the SLF4J {@link MDC} and validated against the format the

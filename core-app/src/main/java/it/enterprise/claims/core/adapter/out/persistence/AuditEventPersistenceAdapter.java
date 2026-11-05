@@ -16,8 +16,8 @@ import org.springframework.transaction.annotation.Transactional;
 /**
  * Persistence adapter implementing {@link AuditEventPort} over {@code coreapp.audit_events}.
  *
- * <p>Append-only (decision A5/DD-11): the adapter exposes no update and no delete, and the entity is
- * mapped with {@code @Immutable}, so the trail can only grow.
+ * <p>Append-only (decision A5/DD-11): the adapter exposes no update and no delete, and the entity
+ * is mapped with {@code @Immutable}, so the trail can only grow.
  *
  * <p>{@code details} is a {@code jsonb} column: it is serialised from the domain {@code Map} on
  * write and parsed back on read, so the application never handles PostgreSQL-specific types.
@@ -60,12 +60,12 @@ public class AuditEventPersistenceAdapter implements AuditEventPort {
 
   @Override
   @Transactional(readOnly = true)
-  public Page<AuditEvent> findByClaimId(
-      UUID claimId, AuditEventType eventType, Pageable pageable) {
+  public Page<AuditEvent> findByClaimId(UUID claimId, AuditEventType eventType, Pageable pageable) {
     Page<AuditEventJpaEntity> page =
         eventType == null
             ? auditEventJpaRepository.findByClaimId(claimId, pageable)
-            : auditEventJpaRepository.findByClaimIdAndEventType(claimId, eventType.name(), pageable);
+            : auditEventJpaRepository.findByClaimIdAndEventType(
+                claimId, eventType.name(), pageable);
     return page.map(this::toDomain);
   }
 

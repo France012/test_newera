@@ -29,8 +29,8 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
 
 /**
- * Use cases of the document aggregate: upload, versioning, retention, read metadata, stream content,
- * list by claim and soft delete.
+ * Use cases of the document aggregate: upload, versioning, retention, read metadata, stream
+ * content, list by claim and soft delete.
  *
  * <p>Design notes:
  *
@@ -39,8 +39,8 @@ import org.springframework.web.multipart.MultipartFile;
  *       derived from it (no user-supplied name ever reaches the filesystem);
  *   <li>the SHA-256 checksum is computed on the bytes that are actually stored, so it can be used
  *       to verify integrity and to deduplicate later without a schema change;
- *   <li>a new version keeps the {@code documentKey} of the first one, gets the next
- *       {@code versionNumber} and becomes the only current row of the chain (decision A6);
+ *   <li>a new version keeps the {@code documentKey} of the first one, gets the next {@code
+ *       versionNumber} and becomes the only current row of the chain (decision A6);
  *   <li>deletion is logical and is forbidden while the document is on legal hold (decision A7):
  *       metadata stays auditable and the content is kept for the retention period (physical purge
  *       is a separate retention job, out of scope in phase 1).
@@ -194,7 +194,8 @@ public class DocumentService {
     if (claimId == null) {
       throw new InvalidDocumentException("claimId is required");
     }
-    return DocumentPageResponse.from(documentRepository.findByClaimId(claimId, currentOnly, pageable));
+    return DocumentPageResponse.from(
+        documentRepository.findByClaimId(claimId, currentOnly, pageable));
   }
 
   /**
@@ -220,16 +221,14 @@ public class DocumentService {
    * @throws RetentionViolationException when the date is in the past (HTTP 400)
    */
   @Transactional
-  public DocumentResponse updateRetention(
-      UUID documentId, DocumentRetentionUpdateRequest request) {
+  public DocumentResponse updateRetention(UUID documentId, DocumentRetentionUpdateRequest request) {
     Document document = load(documentId);
     LocalDate retentionUntil =
         request.retentionUntil() == null ? document.retentionUntil() : request.retentionUntil();
     boolean legalHold = request.legalHold() == null ? document.legalHold() : request.legalHold();
 
     if (retentionUntil != null && retentionUntil.isBefore(LocalDate.now(clock))) {
-      throw new RetentionViolationException(
-          "retentionUntil " + retentionUntil + " is in the past");
+      throw new RetentionViolationException("retentionUntil " + retentionUntil + " is in the past");
     }
     return DocumentResponse.from(
         documentRepository.updateRetention(documentId, retentionUntil, legalHold));

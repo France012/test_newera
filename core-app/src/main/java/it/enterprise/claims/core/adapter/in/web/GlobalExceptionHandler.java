@@ -70,8 +70,7 @@ public class GlobalExceptionHandler {
    * @return 404 problem
    */
   @ExceptionHandler(ActorNotFoundException.class)
-  public ProblemDetail handleActorNotFound(
-      ActorNotFoundException ex, HttpServletRequest request) {
+  public ProblemDetail handleActorNotFound(ActorNotFoundException ex, HttpServletRequest request) {
     return problem(HttpStatus.NOT_FOUND, "Actor not found", ex.getMessage(), request);
   }
 

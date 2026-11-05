@@ -11,7 +11,7 @@
   <parent>
     <groupId>it.enterprise.claims</groupId>
     <artifactId>claims-platform</artifactId>
-    <version>0.1.0</version>
+    <version>0.2.0</version>
   </parent>
 
   <artifactId>document-service</artifactId>

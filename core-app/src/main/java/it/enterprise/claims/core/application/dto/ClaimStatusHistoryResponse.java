@@ -13,8 +13,7 @@ import java.util.UUID;
  * @param toStatus state the claim moved to
  * @param note free-text reason, may be {@code null}
  * @param changedAt timestamp of the transition
- * @param actorId actor who performed the transition, {@code null} for rows written before
- *     TK-64FBC8
+ * @param actorId actor who performed the transition, {@code null} for rows written before TK-64FBC8
  * @param actorDisplayName display name of that actor, may be {@code null}
  */
 public record ClaimStatusHistoryResponse(

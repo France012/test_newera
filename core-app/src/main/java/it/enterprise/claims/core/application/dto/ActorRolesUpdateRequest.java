@@ -14,4 +14,5 @@ import java.util.Set;
  * @param roleCodes complete set of role codes, may be empty to revoke everything
  */
 public record ActorRolesUpdateRequest(
-    @NotNull @Size(max = 10, message = "an actor can hold at most 10 roles") Set<String> roleCodes) {}
+    @NotNull @Size(max = 10, message = "an actor can hold at most 10 roles")
+        Set<String> roleCodes) {}

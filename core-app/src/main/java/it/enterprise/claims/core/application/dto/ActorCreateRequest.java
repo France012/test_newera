@@ -22,7 +22,8 @@ import java.util.Set;
  * @param roleCodes roles to grant at creation, may be {@code null} or empty
  */
 public record ActorCreateRequest(
-    @NotBlank @Size(min = 3, max = 128)
+    @NotBlank
+        @Size(min = 3, max = 128)
         @Pattern(
             regexp = "^[A-Za-z0-9._:@|/-]{3,128}$",
             message = "must contain only letters, digits and ._:@|/- (3-128 characters)")

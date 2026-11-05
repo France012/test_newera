@@ -110,7 +110,7 @@ class DocumentControllerTest {
   @Test
   @DisplayName("GET /api/v1/documents returns the page envelope")
   void listReturnsPage() throws Exception {
-    when(documentService.findByClaimId(eq(CLAIM_ID), any()))
+    when(documentService.findByClaimId(eq(CLAIM_ID), eq(true), any()))
         .thenReturn(new DocumentPageResponse(List.of(documentResponse()), 0, 20, 1, 1));
 
     mockMvc
@@ -131,12 +131,18 @@ class DocumentControllerTest {
   private static DocumentResponse documentResponse() {
     return new DocumentResponse(
         DOCUMENT_ID,
+        DOCUMENT_ID,
         CLAIM_ID,
         "policy.pdf",
         MediaType.APPLICATION_PDF_VALUE,
         3L,
         "INVOICE",
         "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824",
+        1,
+        true,
+        null,
+        null,
+        false,
         OffsetDateTime.parse("2025-03-10T09:00:00Z"),
         1);
   }

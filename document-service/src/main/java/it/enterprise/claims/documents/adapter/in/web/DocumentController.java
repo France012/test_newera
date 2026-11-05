@@ -190,8 +190,7 @@ public class DocumentController {
       produces = MediaType.APPLICATION_JSON_VALUE)
   @Operation(summary = "Set the retention date and/or the legal hold of a document")
   public DocumentResponse updateRetention(
-      @PathVariable UUID documentId,
-      @Valid @RequestBody DocumentRetentionUpdateRequest request) {
+      @PathVariable UUID documentId, @Valid @RequestBody DocumentRetentionUpdateRequest request) {
     return documentService.updateRetention(documentId, request);
   }
 

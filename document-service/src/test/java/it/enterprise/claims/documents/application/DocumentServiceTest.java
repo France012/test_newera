@@ -28,6 +28,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.mock.web.MockMultipartFile;
 
 /** Unit tests of the document use cases: sanitisation, checksum, storage contract, soft delete. */
@@ -149,7 +150,7 @@ class DocumentServiceTest {
   @Test
   @DisplayName("findByClaimId() requires a claim id")
   void findByClaimIdRequiresClaimId() {
-    assertThatThrownBy(() -> documentService.findByClaimId(null, null))
+    assertThatThrownBy(() -> documentService.findByClaimId(null, true, PageRequest.of(0, 20)))
         .isInstanceOf(InvalidDocumentException.class)
         .hasMessageContaining("claimId");
   }

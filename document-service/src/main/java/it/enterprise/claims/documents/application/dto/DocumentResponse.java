@@ -10,8 +10,8 @@ import java.util.UUID;
  *
  * <p>{@code storageKey} is deliberately not exposed: how and where the content is stored is an
  * internal detail, the caller addresses the content through {@code GET /{id}/content}. {@code
- * keyRef} <em>is</em> exposed because it is an opaque, non-secret alias of the encryption key
- * (KMS alias/version) that the caller may need for its own compliance records.
+ * keyRef} <em>is</em> exposed because it is an opaque, non-secret alias of the encryption key (KMS
+ * alias/version) that the caller may need for its own compliance records.
  *
  * @param id identifier
  * @param documentKey logical identity shared by all versions of this document

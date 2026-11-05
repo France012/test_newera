@@ -80,8 +80,7 @@ public class ClaimAssignmentController {
    */
   @DeleteMapping("/{roleCode}")
   @Operation(summary = "Un-assign the current holder of a role (soft, history preserved)")
-  public ResponseEntity<Void> unassign(
-      @PathVariable UUID claimId, @PathVariable String roleCode) {
+  public ResponseEntity<Void> unassign(@PathVariable UUID claimId, @PathVariable String roleCode) {
     claimAssignmentService.unassign(claimId, roleCode);
     return ResponseEntity.noContent().build();
   }
