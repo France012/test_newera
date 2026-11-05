@@ -13,6 +13,7 @@ local orchestration, Kubernetes base manifests and helper scripts.
 ```
 infra/
 ├── db/init/01-init-schemas.sql      # dev-only provisioning of schemas coreapp + documents
+├── db/verify/01-assert-schema.sql   # read-only schema contract, run AFTER the Flyway migrations
 ├── docker/
 │   ├── core-app.Dockerfile          # Java 21 service, port 8180
 │   ├── document-service.Dockerfile  # Java 21 service, port 8181 (+ volume)

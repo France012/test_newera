@@ -17,15 +17,22 @@ Maven modules `core-app` and `document-service` (Java 21, Spring Boot 3.3.5).
 | Spring Data repositories (`*JpaRepository.java`)                       | **Data Architecture** | ✅ done                         |
 | `ClaimStatus` domain enum                                              | **Data Architecture** | ✅ done — **do not redefine**   |
 | Schema ⇄ entity contract tests (`SchemaMigrationContractTest`, §7-bis) | **Data Architecture** | ✅ done                         |
-| Repository **adapters** (entity ⇄ domain mapping)                      | Backend               | ⬜ to implement                 |
-| Domain models, services, DTOs, controllers                             | Backend               | ⬜ to implement                 |
-| `application.yml` datasource/flyway properties                         | Backend               | ⬜ to implement (see §6)        |
-| `docker-compose.yml` wiring of `infra/db/init`                         | Infra                 | ⬜ to implement                 |
+| Executable SQL schema contract (`infra/db/verify/01-assert-schema.sql`, §8-bis) | **Data Architecture** | ✅ done                 |
+| Repository **adapters** (entity ⇄ domain mapping)                      | Backend               | ✅ done (`Claim`/`Policy`/`Document`RepositoryAdapter) |
+| Domain models, services, DTOs, controllers                             | Backend               | ✅ done                         |
+| `application.yml` datasource/flyway properties                         | Backend               | ✅ done (§6 contract respected) |
+| `docker-compose.yml` wiring of `infra/db/init`                         | Infra                 | ✅ done (`./db/init:/docker-entrypoint-initdb.d:ro`) |
 
-> ⚠️ **Already created, do not duplicate:** `it.enterprise.claims.core.domain.model.ClaimStatus`,
-> all `*JpaEntity` classes and all `*JpaRepository` interfaces.
-> The backend only has to write `ClaimRepositoryAdapter`, `PolicyRepositoryAdapter`,
-> `DocumentRepositoryAdapter` (port → entity translation) and the services/controllers.
+> ⚠️ **Do not duplicate:** `it.enterprise.claims.core.domain.model.ClaimStatus`, all `*JpaEntity`
+> classes and all `*JpaRepository` interfaces already exist and are owned by this layer.
+> `ClaimStatus` is the **single source of truth** for the seven status values: the CHECK constraints
+> in the migrations mirror it, and both guards below fail on any divergence.
+
+> 📌 **Changing the schema (read before any `V2__`):** a change is complete only when **all four**
+> artifacts move together in the same pull request — (1) the new Flyway migration, (2) the JPA
+> entity, (3) `SchemaMigrationContractTest` (§7-bis), (4) `infra/db/verify/01-assert-schema.sql`
+> (§8-bis). The Java test proves entity ⇄ SQL-text consistency; the SQL contract proves that
+> PostgreSQL actually accepts and stores the result.
 
 ---
 
@@ -269,6 +276,75 @@ runs in the default build of every agent and in the CI `unit-test` job.
 
 ---
 
+## 7-ter. Executable SQL schema contract (`infra/db/verify/01-assert-schema.sql`)
+
+§7-bis compares the JPA entities with the **text** of the migration. It never opens a
+connection, so it cannot prove that PostgreSQL accepts the migration or that the
+objects really exist after `flyway migrate`. `01-assert-schema.sql` is that missing
+half: a read-only script that runs **after** the migrations and aborts
+(`raise exception` → exit code 1, `ON_ERROR_STOP`) on the first divergence from §4.
+
+It creates nothing (only `pg_temp.*` helper functions), changes no data, and is
+independent of the test classpath — so it can be attached to any stage that has a
+real PostgreSQL.
+
+| #   | Assertion group                                                                                                                 | Protects                                                    |
+| --- | ------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------- |
+| 1   | schemas `coreapp` + `documents` exist, no domain table leaks into `public`/the wrong schema                                      | DD-9, database-per-service                                  |
+| 2   | all 6 tables exist                                                                                                              | lost/renamed migration                                      |
+| 3   | every column: type, `varchar(n)` length, nullability, `numeric(12,2)` precision/scale                                            | silent truncation, `ddl-auto=validate` failure at startup   |
+| 4   | every PK by name **and by column list** (incl. the composite `pk_claim_documents`)                                               | lost/surrogate PK, duplicate document links (DD-4)          |
+| 5   | every unique key, every named CHECK, every FK by name                                                                           | dropped constraint                                          |
+| 6   | `fk_claim_status_history_claim` / `fk_claim_documents_claim` are `ON DELETE CASCADE`                                             | orphaned audit/link rows                                    |
+| 7   | **no** FK on `documents.claim_id` and on `claim_documents.document_id`                                                           | accidental cross-service FK (DD-5)                          |
+| 8   | `ck_claims_status` literals == `ClaimStatus` exactly (set equality, sorted), and **no native PG enum type** exists               | §7.5 drift, `ALTER TYPE` locking risk (DD-7)                |
+| 9   | 9 indexes exist, `idx_claims_opened_at` / `idx_documents_uploaded_at` keep `DESC`, `idx_documents_claim_active` keeps `WHERE deleted_at IS NULL` | lost/partial-index regressions (DD-6), lost list sort       |
+| 10  | `checksum_sha256` is `varchar(64)` (not `char(64)`) + hex CHECK                                                                  | DD-2                                                        |
+| 11  | if `flyway_schema_history` exists: no failed migration, `V1` recorded successful                                                 | half-applied schema                                         |
+
+```bash
+# after migrate (Flyway or the raw V1 scripts) on the same database
+psql "postgresql://$POSTGRES_USER:$POSTGRES_PASSWORD@localhost:5442/claims" \
+     -v ON_ERROR_STOP=1 -f infra/db/verify/01-assert-schema.sql
+# => SCHEMA CONTRACT OK | 92 assertions | 6 tables · 2 schemas · 29 constraints · 9 indexes · 7 ClaimStatus values
+```
+
+`verify` is intentionally **not** wired into `.github/workflows/ci.yml` by this layer
+(workflow ownership = DevOps/Infra). Ready-to-paste job, to be added once a PostgreSQL
+service container is in the file:
+
+```yaml
+db-schema-contract:
+  runs-on: ubuntu-latest
+  services:
+    postgres:
+      image: postgres:16-alpine
+      env:
+        POSTGRES_USER: claims
+        POSTGRES_PASSWORD: claims_ci_only
+        POSTGRES_DB: claims
+      ports: ['5442:5432']
+      options: >-
+        --health-cmd "pg_isready -U claims -d claims"
+        --health-interval 5s --health-timeout 5s --health-retries 20
+  steps:
+    - uses: actions/checkout@v4
+    - name: Apply migrations
+      run: |
+        for f in infra/db/init/01-init-schemas.sql \
+                 core-app/src/main/resources/db/migration/*.sql \
+                 document-service/src/main/resources/db/migration/*.sql; do
+          psql "postgresql://claims:claims_ci_only@localhost:5442/claims" \
+               -v ON_ERROR_STOP=1 -f "$f"
+        done
+    - name: Assert schema contract
+      run: |
+        psql "postgresql://claims:claims_ci_only@localhost:5442/claims" \
+             -v ON_ERROR_STOP=1 -f infra/db/verify/01-assert-schema.sql
+```
+
+---
+
 ## 8. How to verify locally
 
 ```bash
@@ -283,13 +359,28 @@ psql "postgresql://$POSTGRES_USER:$POSTGRES_PASSWORD@localhost:5442/claims" \
 # flyway -url=jdbc:postgresql://localhost:5442/claims -schemas=coreapp \
 #        -locations=filesystem:core-app/src/main/resources/db/migration migrate
 
-# 2) JPA model compiles and matches the schema
+# 2) executable schema contract: objects, types, keys, indexes, enum values (§7-ter)
+psql "postgresql://$POSTGRES_USER:$POSTGRES_PASSWORD@localhost:5442/claims" \
+     -v ON_ERROR_STOP=1 -f infra/db/verify/01-assert-schema.sql
+# => SCHEMA CONTRACT OK | 92 assertions | 6 tables · 2 schemas · 29 constraints · 9 indexes · 7 ClaimStatus values
+
+# 3) JPA model compiles and matches the schema text
 mvn -B -pl core-app,document-service -am verify   # includes spotless/checkstyle
 ```
 
-> **Environment note**: PostgreSQL, Docker and the Flyway CLI are **not installed** in the current
-> dev container. The migrations were therefore validated with the real PostgreSQL grammar
-> (`libpg_query`/`pglast`, 29 statements parsed, 0 errors) and every entity/repository was compiled
-> with `javac --release 21 -Xlint:all -Werror`. Schema creation, `ddl-auto=validate` and the
-> integration tests remain to be proven by CI (`.github/workflows/ci.yml`) where the PostgreSQL
-> service container is available.
+> **Environment note (state of verification, no overclaiming)**: PostgreSQL, Docker and the
+> Flyway CLI are **not installed** in the dev container, so nothing in this document has ever been
+> executed against a live server from here. What *is* proven locally today:
+>
+> - migrations + init script **parse** with the real PostgreSQL grammar (`libpg_query` via
+>   `pglast`): 19 + 10 + 4 statements, 0 parse errors; `01-assert-schema.sql` parses as 101
+>   statements, 0 errors;
+> - `SchemaMigrationContractTest` is **green in both modules** (6 tests each, 0 failures) —
+>   entity ⇄ migration-text consistency;
+> - entities and repositories **compile** under `javac --release 21 -Xlint:all -Werror`
+>   and the modules pass Spotless + Checkstyle with 0 violations.
+>
+> Still unproven without a server: schema creation, `ddl-auto=validate` at startup, and
+> `01-assert-schema.sql` actually passing. ⚠️ `.github/workflows/ci.yml` currently declares **no
+> PostgreSQL service container**, so CI does not close this gap either — the `db-schema-contract`
+> job in §7-ter is the proposed fix (workflow file is owned by DevOps/Infra).

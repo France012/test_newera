@@ -139,3 +139,10 @@ npm --prefix frontend run build
 
 `dist/` is uploaded as a build artefact. The production image (`infra/docker/frontend.Dockerfile`,
 nginx on port 8188) is built and signed in `container-images.yml` — **not** from this module.
+
+`js-yaml` is a **direct** `devDependency`, not an incidental one. The `repo-hygiene` job of
+`ci.yml` loads `./frontend/node_modules/js-yaml` to parse every YAML/OpenAPI snapshot (ADR-0009),
+because this module is the only Node project in the repository (ADR-0008). It previously arrived
+only as a transitive dependency of `@eslint/eslintrc`, so any ESLint upgrade that dropped it would
+have broken the gate without touching a single line of this module. Keep it declared: if a
+lockfile refresh ever removes it, re-add `npm install --save-dev js-yaml`.
