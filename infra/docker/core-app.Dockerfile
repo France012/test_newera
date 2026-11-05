@@ -24,7 +24,7 @@ COPY core-app/src core-app/src
 RUN mvn -B -ntp -pl core-app -am -DskipTests package
 
 # ---------------------------- runtime stage ----------------------------------
-FROM eclipse-temurin:21-jre-alpine AS runtime
+FROM eclipse-temurin:25-jre-alpine AS runtime
 
 # Dedicated unprivileged account (no login shell, fixed uid).
 RUN addgroup -g 10001 -S app \

@@ -21,7 +21,7 @@ COPY bff/src bff/src
 RUN mvn -B -ntp -pl bff -am -DskipTests package
 
 # ---------------------------- runtime stage ----------------------------------
-FROM eclipse-temurin:21-jre-alpine AS runtime
+FROM eclipse-temurin:25-jre-alpine AS runtime
 
 RUN addgroup -g 10001 -S app \
   && adduser -u 10001 -S -G app -h /app app
