@@ -38,7 +38,7 @@ jobs:
             dockerfile: infra/docker/frontend.Dockerfile
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       # GHCR rejects uppercase names: France012/test_newera must be lowercased.
       - name: Compute image base
@@ -50,10 +50,10 @@ jobs:
           echo "Image base: ghcr.io/${OWNER}/${REPO}"
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v4
 
       - name: Login to GHCR
-        uses: docker/login-action@v3
+        uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -61,7 +61,7 @@ jobs:
 
       - name: Docker metadata (tags and labels)
         id: meta
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@v6
         with:
           images: ${{ env.IMAGE_BASE }}/${{ matrix.service }}
           tags: |
@@ -72,7 +72,7 @@ jobs:
 
       - name: Build and push
         id: build
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: ${{ matrix.dockerfile }}
@@ -95,7 +95,7 @@ jobs:
           upload-release-assets: false
 
       - name: Upload SBOM artefact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: sbom-${{ matrix.service }}
           path: sbom-${{ matrix.service }}.cdx.json
@@ -111,7 +111,7 @@ jobs:
             "${IMAGE_BASE}/${{ matrix.service }}@${{ steps.build.outputs.digest }}"
 
       - name: Attest build provenance
-        uses: actions/attest-build-provenance@v1
+        uses: actions/attest-build-provenance@v4
         with:
           subject-name: ${{ env.IMAGE_BASE }}/${{ matrix.service }}
           subject-digest: ${{ steps.build.outputs.digest }}
@@ -123,10 +123,10 @@ jobs:
     timeout-minutes: 15
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Set up JDK 21
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v6
         with:
           distribution: temurin
           java-version: '21'
@@ -139,7 +139,7 @@ jobs:
         run: ./mvnw -B -ntp org.cyclonedx:cyclonedx-maven-plugin:2.8.0:makeAggregateBom
 
       - name: Upload aggregate SBOM
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: sbom-claims-platform
           path: '**/target/sbom-claims-platform.json'
